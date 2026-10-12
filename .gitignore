@@ -1,0 +1,67 @@
+# ===== DEPENDENCIES =====
+node_modules/
+.pnpm-store/
+
+# ===== BUILD OUTPUTS =====
+dist/
+build/
+*.tsbuildinfo
+
+# ===== SHARED PACKAGE =====
+packages/shared/dist/
+
+# ===== FRONTEND (Vite + Capacitor) =====
+apps/frontend/dist/
+apps/frontend/.vite/
+apps/frontend/.capacitor/
+# Capacitor native platform folders (regenerated via `npx cap add <platform>`)
+# Relocated under mobile/ via android.path / ios.path in capacitor.config.ts,
+# so a single rule covers both platforms.
+# If you later customize native code, you might want to commit these.
+# For this experiment, we ignore them to keep the repo tiny.
+apps/frontend/mobile/
+apps/frontend/*.apk
+apps/frontend/*.aab
+
+# ===== BACKEND (Apollo Server) =====
+apps/server/dist/
+apps/server/node_modules/
+
+# ===== ENVIRONMENT VARIABLES (Sensitive) =====
+.env
+.env.local
+.env.*.local
+*.env
+
+# ===== IDE & OS =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===== LOGS =====
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== COVERAGE =====
+coverage/
+.nyc_output/
+
+# ===== TEMPORARY FILES =====
+*.tmp
+*.temp
+.cache/
+
+# ===== SCRATCHPAD+AI FILES =====
+scratchpad/
+.playwright-mcp/
+
+
+# ===== WSL FILES =====
+*.Identifier
