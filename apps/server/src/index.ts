@@ -1,10 +1,10 @@
 import { ApolloServer } from '@apollo/server';
 import { startStandaloneServer } from '@apollo/server/standalone';
-import { generatePuzzle, replayMoves, checkWin, type Move } from '@arrow-puzzle/shared';
+import { generatePuzzle, replayMoves, checkWin, isValidOptions, type BlockedArrows, type Move } from '@arrow-puzzle/shared';
 
 // The arguments mirror the shared contract: the seed and generation options
-// rebuild the board, the moves replay it. Adjust `moves` and the option
-// arguments when the shared Move / PuzzleOptions types change.
+// (size, maxLength, blockedArrows) rebuild the board and its rules, the moves
+// (tapped arrow ids) replay it.
 const typeDefs = `#graphql
   type SubmitResponse {
     success: Boolean!
@@ -12,8 +12,14 @@ const typeDefs = `#graphql
     message: String
   }
 
+  # Mirrors BlockedArrows in packages/shared.
+  enum BlockedArrows {
+    return
+    stay
+  }
+
   type Mutation {
-    submitAttempt(seed: Int!, moves: [Int!]!, timeMs: Int!, size: Int!): SubmitResponse!
+    submitAttempt(seed: Int!, moves: [Int!]!, timeMs: Int!, size: Int!, maxLength: Int!, blockedArrows: BlockedArrows!): SubmitResponse!
   }
 
   type Query {
@@ -23,10 +29,17 @@ const typeDefs = `#graphql
 
 const resolvers = {
   Mutation: {
-    submitAttempt: async (_: any, { seed, moves, timeMs, size }: { seed: number; moves: Move[]; timeMs: number; size: number }) => {
+    submitAttempt: async (_: any, { seed, moves, timeMs, size, maxLength, blockedArrows }: { seed: number; moves: Move[]; timeMs: number; size: number; maxLength: number; blockedArrows: BlockedArrows }) => {
       try {
+        // 0. Options come from the client; out-of-range ones could make
+        //    generation arbitrarily expensive.
+        const options = { size, maxLength, blockedArrows };
+        if (!isValidOptions(options)) {
+          return { success: false, score: 0, message: 'Invalid puzzle options.' };
+        }
+
         // 1. Rehydrate the EXACT same puzzle using the seed
-        const initialState = generatePuzzle(seed, { size });
+        const initialState = generatePuzzle(seed, options);
 
         // 2. Replay the exact moves from the client using the shared logic
         const finalState = replayMoves(initialState, moves);
@@ -66,13 +79,35 @@ const resolvers = {
   }
 };
 
-const server = new ApolloServer({ typeDefs, resolvers });
+// Apollo's own termination handling stops the server and then re-raises the
+// signal, so the process always dies *by* SIGINT/SIGTERM and pnpm reports
+// Ctrl+C as a failed command. Shutdown is handled below instead.
+const server = new ApolloServer({ typeDefs, resolvers, stopOnTerminationSignals: false });
+
+let stopping = false;
+const shutdown = async (signal: NodeJS.Signals) => {
+  // One Ctrl+C usually arrives more than once: the terminal signals the whole
+  // process group, and wrappers such as `tsx watch` relay it to us as well.
+  if (stopping) return;
+  stopping = true;
+  console.log(`${signal} received, shutting down...`);
+  try {
+    // Drains in-flight requests and closes the HTTP listener.
+    await server.stop();
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+};
 
 const start = async () => {
   // 0.0.0.0 rather than the dual-stack default: see "Testing against a local
   // server on a real device" in the README (WSL2 + adb reverse).
   const { url } = await startStandaloneServer(server, { listen: { port: 4000, host: '0.0.0.0' } });
   console.log(`🚀 Apollo Server ready at ${url}`);
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 };
 
 start();

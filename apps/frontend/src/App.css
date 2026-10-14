@@ -13,3 +13,13 @@ html, body, #root {
      without this the white labels sat on a white band and vanished. */
   background: #2c3e50;
 }
+/* A blocked arrow nudges toward its blocker and back. --bump-x/--bump-y are
+   set per arrow in Figure3D.tsx along its heading. */
+@keyframes arrow-bump {
+  0%, 100% { transform: translate(0, 0); }
+  40% { transform: translate(var(--bump-x), var(--bump-y)); }
+}
+
+.arrow-bump {
+  animation: arrow-bump 0.25s ease-out;
+}

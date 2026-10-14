@@ -12,17 +12,86 @@ opened.
 None of the arrows can move forward if another is in
 its way
 
-## Status
+## Game design
 
-The repository currently holds the **game-agnostic scaffolding**, ported from the sibling
-`liquid-sort-puzzle` project: workspace, build/test tooling, Capacitor setup, Apollo client
-and server, and the seed → replay → verify pipeline. The game itself is a placeholder (a row
-of lit cells; tap each one to switch it off) so the whole pipeline runs end to end.
+### Figures, faces and edges
+
+A puzzle is played on a **figure**: a solid whose faces each carry an N×N grid of cells
+(N is the "Grid" setting). Only the cube exists so far.
+
+Each face has a 3D frame: an outward `normal` and the axes `u` (columns, "right") and `v`
+(rows, "down"), with `u × v = normal`. The frames use CSS orientation (x right, y down,
+z toward the viewer). The frontend therefore places each face with a `matrix3d` built
+straight from its frame, and backface culling works because every face's front side
+points outwards.
+
+Faces meet along **edges, and every edge has a type**. Stepping off a face goes through
+`crossEdge`, which works out the cell and heading on the neighbouring face. `step` then
+asks the edge type what happens:
+
+| Edge type | Effect | Status |
+| --- | --- | --- |
+| `open` | The arrow leaves the figure and is cleared | Implemented, used on every edge |
+| `sticky` *(planned)* | The arrow is carried onto the next face and has to clear another edge | Add to `EdgeType`, return `crossing.cell`/`crossing.dir` from `step` |
+
+Once an edge type can carry arrows across, a slide can circle the figure forever (a ring
+of sticky edges). The loops in `applyMove` and generation must then get a step bound.
+Arrow bodies are also generated within a single face for now. Movement already handles
+bodies that span faces.
+
+### Arrows and moves
+
+An arrow is a path of 1+ cells, stored tail first, plus the heading of its head.
+Tapping it:
+
+- slides it **head-first, one cell at a time**. The body follows the path the head took,
+  like a snake, so bent arrows straighten out as they travel.
+- is **cleared** as soon as its head crosses an `open` edge.
+- is **blocked** when the next cell is taken by another arrow, or by its own body. Its
+  own tail doesn't count, because the tail moves out as the head moves in.
+
+What a blocked arrow does depends on the `blockedArrows` rule, a difficulty option:
+
+| Rule | Blocked arrow | Effect |
+| --- | --- | --- |
+| `return` (default) | Goes back to where it started | Only clearing changes the board, so it **can never deadlock**. Every tap either clears an arrow or leaves the board as it was (still costing a move) |
+| `stay` (hard, the "Hard" checkbox) | Stays where it stopped | Arrows can be pushed into each other's paths, so careless moves can leave the board unsolvable. *New Game* is the way out |
+
+A move is the tapped arrow's `id`, and **every tap on an arrow still on the board is a
+move**, including one that cannot advance. A blocked attempt is recorded, sent to the
+server and counted in the score, even when it leaves the board unchanged (always the case
+under `return`). The frontend nudges a blocked arrow toward its blocker and back, so the
+attempt visibly registers. Ids that are not on the board (cleared or made up) are not
+moves, and replay ignores them.
+
+The rule is part of `PuzzleOptions` and is copied into `GameState`, because replay depends
+on it. It is sent to the server with the attempt, and changing it starts a new game, so one
+move list is always replayed under one rule.
+
+### Generation
+
+Arrows are placed one at a time from random heads, headings and lengths (up to the
+"Length" setting). Each is kept only if its path from head to edge is clear of every
+arrow placed before it. Clearing arrows in **reverse placement order (highest id first)**
+therefore always solves a fresh board. The tests use exactly that order as the
+reference solution. Under `return` this also holds for every board reached by play: what
+is left is a subset of the original arrows, and the highest remaining id is never
+blocked.
+
+### Rendering
+
+`apps/frontend/src/components/Figure3D.tsx` draws the figure with CSS 3D transforms. The
+solid carries a single rotation matrix. Dragging rotates it about the screen axes, so a
+horizontal drag always spins it left and right, however tilted it is. A press that moves
+more than a few pixels is a drag and never a tap. Faces turned away are culled, so their
+arrows cannot be tapped.
 
 ## Reusing this scaffold for a new game
 
-The commit that introduced the scaffolding is meant to be copied as-is to start the next
-game. After copying it:
+Commit `0ae29a5` ("Adds game-agnostic scaffolding from liquid-sort-puzzle") is the template:
+it holds the scaffolding with a placeholder game (a row of lit cells; tap each one to switch
+it off). Copy the tree **at that commit**, not at a later one, to start the next game. After
+copying it:
 
 1. **Rename** — replace `arrow-puzzle` / `@arrow-puzzle/shared` / `Arrow Puzzle` /
    `com.arrow.puzzle` in:
@@ -75,8 +144,12 @@ arrow-puzzle/
 │       ├── tsconfig.json
 │       ├── jest.config.cjs
 │       ├── src/
-│       │   └── index.ts       (Pure logic + seeded PRNG)
+│       │   ├── index.ts       (Re-exports; documents the shared contract)
+│       │   ├── rng.ts         (Seeded PRNG)
+│       │   ├── figure.ts      (Faces, typed edges, crossing between faces)
+│       │   └── game.ts        (Arrows, moves, generation, win check)
 │       └── test/
+│           ├── figure.test.ts
 │           └── game.test.ts
 └── apps/
     ├── frontend/
@@ -96,7 +169,8 @@ arrow-puzzle/
     │       ├── App.tsx
     │       ├── App.css
     │       ├── components/
-    │       │   └── CountStepper.tsx (mobile-friendly numeric setting)
+    │       │   ├── CountStepper.tsx (mobile-friendly numeric setting)
+    │       │   └── Figure3D.tsx     (rotatable CSS 3D figure, arrow taps)
     │       ├── apollo/
     │       │   └── client.ts
     │       └── graphql/
@@ -145,6 +219,33 @@ This starts the shared package in watch mode alongside the frontend and server:
 
 `shared` must be built (or running via `pnpm dev`/`build:shared`) before `frontend` or `server`, since both consume its compiled `dist/` output rather than the TypeScript source directly.
 
+### Stopping the servers (Ctrl+C)
+
+The server shuts down gracefully on SIGINT/SIGTERM. It drains in-flight requests, closes
+port 4000 and exits with code 0. Apollo's own handling is disabled
+(`stopOnTerminationSignals: false`), because it re-raises the signal after stopping, so
+every Ctrl+C looked like a crash. Duplicate signals are ignored: one Ctrl+C reaches the
+server both from the terminal and relayed through pnpm.
+
+Two settings keep the chain between your terminal and the server quiet:
+
+- `apps/server` runs in development with `node --watch --import tsx` rather than
+  `tsx watch`. `tsx watch` received the Ctrl+C twice (terminal + pnpm), took the second as
+  "force kill" and SIGKILLed the server mid-shutdown. Node's watch mode restarts on change
+  with a SIGTERM, which goes through the same graceful shutdown.
+- `.npmrc` sets `shell-emulator=true`, so pnpm runs scripts with its built-in shell instead
+  of `sh` (dash on Ubuntu/WSL) or `cmd.exe`. Otherwise the intermediate `sh` dies from the
+  Ctrl+C and pnpm reports `Command failed with signal "SIGINT"`, even though the server
+  exited cleanly. It also makes scripts behave the same on Windows and Linux.
+
+Some messages on Ctrl+C are expected and are **not** crashes:
+
+| Command | What you may see | Why |
+| --- | --- | --- |
+| `pnpm --filter server dev` / `start` | Nothing beyond `SIGINT received, shutting down...` | Clean |
+| `pnpm dev:server` | `ELIFECYCLE Command failed with exit code 129` | The root script runs pnpm inside pnpm, and the inner pnpm ends on the signal itself |
+| `pnpm dev` | `Failed` for `shared` (`tsc --watch`) and `frontend` (`vite`); `apps/server dev: Done` | Those watchers simply die on SIGINT |
+
 ### Testing
 
 Tests run on **Jest** with **ts-jest**, and live in `packages/shared/test/`.
@@ -164,6 +265,11 @@ NodeNext module resolution; Jest maps it back to the `.ts` file.
 and shared verbatim by the client and the server. `jest.config.cjs` enforces **100%**
 statement, branch, function and line coverage as a threshold — adding a function without a
 test fails the run. Lower it there if that gate gets in the way.
+
+| File | Focus |
+| --- | --- |
+| `test/figure.test.ts` | Face frames are right-handed, edge count and adjacency, `crossEdge` round-trips for every boundary cell |
+| `test/game.test.ts` | Options bounds, generation (deterministic, well-formed, solvable), sliding/blocking/clearing under both `blockedArrows` rules (including no deadlock under `return`), win validation |
 
 Whatever the game, the suite should cover the two properties the architecture rests on:
 
