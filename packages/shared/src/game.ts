@@ -40,12 +40,12 @@ export interface PuzzleOptions {
   blockedArrows: BlockedArrows;
 }
 
-export const DEFAULT_OPTIONS: PuzzleOptions = { size: 3, maxLength: 3, blockedArrows: 'return' };
+export const DEFAULT_OPTIONS: PuzzleOptions = { size: 10, maxLength: 3, blockedArrows: 'return' };
 
 // Bounds the server enforces, since options arrive from the client and
 // generation cost grows with them.
 export const OPTION_LIMITS = {
-  size: { min: 2, max: 6 },
+  size: { min: 2, max: 16 },
   maxLength: { min: 1, max: 5 },
 } as const;
 

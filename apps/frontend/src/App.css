@@ -20,6 +20,12 @@ html, body, #root {
   40% { transform: translate(var(--bump-x), var(--bump-y)); }
 }
 
+/* ...and turns red, fading back to its own colour (--arrow-color). */
+@keyframes arrow-blocked {
+  0%, 50% { color: #e74c3c; }
+  100% { color: var(--arrow-color); }
+}
+
 .arrow-bump {
-  animation: arrow-bump 0.25s ease-out;
+  animation: arrow-bump 0.25s ease-out, arrow-blocked 0.8s ease-out;
 }

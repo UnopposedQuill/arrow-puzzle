@@ -1,6 +1,6 @@
 import {
   generatePuzzle, applyMove, isValidMove, replayMoves, checkWin, isValidOptions, mulberry32,
-  buildCube, cellKey, DIR_DELTAS, DEFAULT_OPTIONS,
+  buildCube, cellKey, DIR_DELTAS, DEFAULT_OPTIONS, OPTION_LIMITS,
   type Arrow, type BlockedArrows, type Cell, type GameState,
 } from '../src/index.js';
 
@@ -20,14 +20,14 @@ describe('mulberry32', () => {
 describe('isValidOptions', () => {
   it('accepts options within the limits', () => {
     expect(isValidOptions(DEFAULT_OPTIONS)).toBe(true);
-    expect(isValidOptions({ size: 2, maxLength: 1, blockedArrows: 'stay' })).toBe(true);
-    expect(isValidOptions({ size: 6, maxLength: 5, blockedArrows: 'return' })).toBe(true);
+    expect(isValidOptions({ size: OPTION_LIMITS.size.min, maxLength: OPTION_LIMITS.maxLength.min, blockedArrows: 'stay' })).toBe(true);
+    expect(isValidOptions({ size: OPTION_LIMITS.size.max, maxLength: OPTION_LIMITS.maxLength.max, blockedArrows: 'return' })).toBe(true);
   });
 
   it('rejects out-of-range, fractional or unknown options', () => {
-    expect(isValidOptions({ ...DEFAULT_OPTIONS, size: 1 })).toBe(false);
-    expect(isValidOptions({ ...DEFAULT_OPTIONS, size: 7 })).toBe(false);
-    expect(isValidOptions({ ...DEFAULT_OPTIONS, maxLength: 6 })).toBe(false);
+    expect(isValidOptions({ ...DEFAULT_OPTIONS, size: OPTION_LIMITS.size.min - 1 })).toBe(false);
+    expect(isValidOptions({ ...DEFAULT_OPTIONS, size: OPTION_LIMITS.size.max + 1 })).toBe(false);
+    expect(isValidOptions({ ...DEFAULT_OPTIONS, maxLength: OPTION_LIMITS.maxLength.max + 1 })).toBe(false);
     expect(isValidOptions({ ...DEFAULT_OPTIONS, size: 2.5 })).toBe(false);
     expect(isValidOptions({ ...DEFAULT_OPTIONS, blockedArrows: 'bounce' as BlockedArrows })).toBe(false);
   });
@@ -43,6 +43,7 @@ describe('generatePuzzle', () => {
 
   it('uses the default options when none are given', () => {
     const state = generatePuzzle(1);
+    expect(DEFAULT_OPTIONS.size).toBeGreaterThanOrEqual(10);
     expect(state.figure.size).toBe(DEFAULT_OPTIONS.size);
     expect(state.blockedArrows).toBe('return');
   });

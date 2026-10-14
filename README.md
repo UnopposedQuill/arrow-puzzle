@@ -17,7 +17,7 @@ its way
 ### Figures, faces and edges
 
 A puzzle is played on a **figure**: a solid whose faces each carry an N×N grid of cells
-(N is the "Grid" setting). Only the cube exists so far.
+(N is the "Grid" setting: 10 by default, 2–16 allowed). Only the cube exists so far.
 
 Each face has a 3D frame: an outward `normal` and the axes `u` (columns, "right") and `v`
 (rows, "down"), with `u × v = normal`. The frames use CSS orientation (x right, y down,
@@ -60,7 +60,8 @@ What a blocked arrow does depends on the `blockedArrows` rule, a difficulty opti
 A move is the tapped arrow's `id`, and **every tap on an arrow still on the board is a
 move**, including one that cannot advance. A blocked attempt is recorded, sent to the
 server and counted in the score, even when it leaves the board unchanged (always the case
-under `return`). The frontend nudges a blocked arrow toward its blocker and back, so the
+under `return`). The frontend nudges a blocked arrow toward its blocker and back and
+flashes it red, so the
 attempt visibly registers. Ids that are not on the board (cleared or made up) are not
 moves, and replay ignores them.
 
@@ -83,8 +84,19 @@ blocked.
 `apps/frontend/src/components/Figure3D.tsx` draws the figure with CSS 3D transforms. The
 solid carries a single rotation matrix. Dragging rotates it about the screen axes, so a
 horizontal drag always spins it left and right, however tilted it is. A press that moves
-more than a few pixels is a drag and never a tap. Faces turned away are culled, so their
-arrows cannot be tapped.
+more than a few pixels is a drag and never a tap.
+
+- **See-through faces.** Faces are translucent glass with no grid lines, so arrows on every
+  side stay visible and it's easier to keep track of what's left. Arrows on faces turned
+  away from the viewer are dimmed and can't be tapped.
+- **Black arrows.** Arrows are black and flash red when an attempt is blocked.
+- **Taps are resolved in code, not by the browser.** Chrome's hit testing of SVG inside
+  perspective 3D transforms misses often on slanted faces; measured, only about half of
+  taps on the two slanted faces of the initial view reached their arrow. Instead,
+  `pickCell` traces the tap from the eye (the CSS `perspective` distance) through the
+  screen point onto the face turned toward the viewer. The arrow occupying that cell is
+  tapped, so the whole cell is the target, not just the drawn line. Faces and their SVGs
+  have `pointer-events: none`, so every press lands on the stage.
 
 ## Reusing this scaffold for a new game
 
