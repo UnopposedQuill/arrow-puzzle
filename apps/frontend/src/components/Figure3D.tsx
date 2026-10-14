@@ -19,7 +19,7 @@
 // traced from the eye through the screen point onto the nearest face turned
 // toward the viewer, and whichever arrow occupies that cell is tapped -- so the
 // whole cell is the target, not just the thin drawn line.
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { cellKey, type Arrow, type BlockedArrows, type Cell, type Face, type Figure, type Trace, type Vec3 } from '@arrow-puzzle/shared';
 import { arrowPieces, moveTrack, restingTrack, type Piece } from './arrowGeometry';
 
@@ -46,6 +46,30 @@ const faceCss = ({ u, v, normal: n }: Face, [x, y, z]: Vec3) =>
 // Front, right and top in view, so the figure reads as a solid from the start
 // (and the notched cube's notch is in sight).
 const INITIAL_ROTATION = multiply(rotX(-0.45), rotY(-0.6));
+// Perspective distance, in figure sides.
+const PERSPECTIVE = 6;
+// Share of the board area the starting view fills, leaving a small margin.
+const FIT = 0.94;
+
+// Room the figure's starting view needs, in figure sides: its bounding cube's
+// corners rotated and projected with the CSS perspective.
+// The starting size fits this snugly; other rotations may clip a little at the
+// stage's edges, which zoom covers.
+const STARTING_SILHOUETTE = (() => {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const x of [-0.5, 0.5]) for (const y of [-0.5, 0.5]) for (const z of [-0.5, 0.5]) {
+    const [rx, ry, rz] = rotate(INITIAL_ROTATION, [x, y, z]);
+    const k = PERSPECTIVE / (PERSPECTIVE - rz);
+    xs.push(rx * k);
+    ys.push(ry * k);
+  }
+  // The figure is centred on the stage but its silhouette is not centred on
+  // the figure, so fit twice its furthest reach from the centre each way.
+  const reach = (vs: number[]) => 2 * Math.max(...vs.map(Math.abs));
+  return { width: reach(xs), height: reach(ys) };
+})();
+
 const DRAG_SPEED = 0.01; // radians per pixel
 const TAP_SLOP = 6; // pixels a pointer may wander before a press becomes a drag
 // Width of the lines drawn along the figure's edges, in screen px. They are
@@ -197,11 +221,9 @@ interface Drawn {
   unclipped: boolean;
 }
 
-export function Figure3D({ figure, arrows, faceSize, bump, animations, onAnimationDone, onArrowTap }: {
+export function Figure3D({ figure, arrows, bump, animations, onAnimationDone, onArrowTap }: {
   figure: Figure;
   arrows: Arrow[];
-  // Side of the whole figure, in px, at zoom 1.
-  faceSize: number;
   // An arrow that just failed to move, shown with a short nudge forward and back.
   bump: { id: number; n: number } | null;
   animations: SlideAnimation[];
@@ -218,9 +240,25 @@ export function Figure3D({ figure, arrows, faceSize, bump, animations, onAnimati
   const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const pinch = useRef<{ distance: number; zoom: number } | null>(null);
 
+  // The board area this component fills, measured; the figure's side at zoom
+  // 1 is chosen so the starting view fits it.
+  const [stage, setStage] = useState<{ width: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = stageRef.current!;
+    const measure = () => setStage({ width: el.clientWidth, height: el.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  // Side of the whole figure, in px, at zoom 1.
+  const faceSize = stage
+    ? Math.max(1, FIT * Math.min(stage.width / STARTING_SILHOUETTE.width, stage.height / STARTING_SILHOUETTE.height))
+    : 1;
+
   // Perspective follows the unzoomed size, so zooming scales the figure
   // without changing how strongly it recedes.
-  const perspective = faceSize * 6;
+  const perspective = faceSize * PERSPECTIVE;
   const cellPx = (faceSize * zoom) / figure.extent;
 
   // The window listeners are registered once, so they read the latest render

@@ -21,10 +21,6 @@ const TITLE = 'Arrow Puzzle';
 
 const FIGURE_NAMES: Record<FigureKind, string> = { cube: 'Cube', notch: 'Notched cube' };
 
-// Side of the whole figure, in px. Its bounding box is roughly 1.75 sides once
-// rotated; keep it clear of the header and controls on a phone.
-const faceSize = () => Math.floor(Math.min(window.innerWidth * 0.48, window.innerHeight * 0.26, 220));
-
 function App() {
   const [state, setState] = useState<GameState | null>(null);
   const [startTime, setStartTime] = useState(Date.now());
@@ -34,7 +30,6 @@ function App() {
   const [options, setOptions] = useState<PuzzleOptions>(DEFAULT_OPTIONS);
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'pending' | 'success' | 'failed'>('idle');
   const [submitResult, setSubmitResult] = useState<{ score?: number | null; message?: string | null } | null>(null);
-  const [size, setSize] = useState(faceSize);
   // The arrow that last failed to move; `n` restarts the bump on repeat taps.
   const [bump, setBump] = useState<{ id: number; n: number } | null>(null);
   // Moves being animated. The board itself is updated at once; these only
@@ -43,12 +38,6 @@ function App() {
   const nextAnimation = useRef(0);
 
   const [submitAttempt] = useMutation<SubmitAttemptData, SubmitAttemptVars>(SUBMIT_ATTEMPT);
-
-  useEffect(() => {
-    const onResize = () => setSize(faceSize());
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
 
   const initGame = (nextOptions: PuzzleOptions) => {
     const newSeed = Math.floor(Math.random() * 1000000);
@@ -156,7 +145,7 @@ function App() {
       }}>
         {state && (
           <Figure3D
-            figure={state.figure} arrows={state.arrows} faceSize={size} bump={bump}
+            figure={state.figure} arrows={state.arrows} bump={bump}
             animations={animations} onAnimationDone={handleAnimationDone} onArrowTap={handleMove}
           />
         )}
