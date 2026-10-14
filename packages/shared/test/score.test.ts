@@ -24,12 +24,13 @@ describe('scoreAttempt', () => {
     expect(scoreAttempt(300, 300, fast(300), DEFAULT_OPTIONS).score).toBeGreaterThan(scoreAttempt(100, 100, fast(100), DEFAULT_OPTIONS).score);
   });
 
-  it('applies the hard and notch bonuses, stacked', () => {
+  it('applies the notched cube bonus', () => {
     const base = scoreAttempt(100, 100, fast(100), DEFAULT_OPTIONS).score;
-    expect(scoreAttempt(100, 100, fast(100), { ...DEFAULT_OPTIONS, blockedArrows: 'stay' }).score).toBe(base * BONUSES.hard);
     expect(scoreAttempt(100, 100, fast(100), { ...DEFAULT_OPTIONS, figure: 'notch' }).score).toBe(base * BONUSES.notch);
-    const both = scoreAttempt(100, 100, fast(100), { ...DEFAULT_OPTIONS, figure: 'notch', blockedArrows: 'stay' });
-    expect(both.bonus).toBe(BONUSES.hard * BONUSES.notch);
-    expect(both.score).toBe(Math.round(base * BONUSES.hard * BONUSES.notch));
+  });
+
+  it('gives no bonus for the blocked-arrows rule', () => {
+    const base = scoreAttempt(100, 100, fast(100), DEFAULT_OPTIONS);
+    expect(scoreAttempt(100, 100, fast(100), { ...DEFAULT_OPTIONS, blockedArrows: 'stay' })).toEqual(base);
   });
 });

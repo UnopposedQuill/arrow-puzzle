@@ -75,12 +75,20 @@ Tapping it:
 left the figure or was blocked. `applyMove` is built on it, and the frontend animates
 exactly that path, so the animation always shows what the rules did.
 
-What a blocked arrow does depends on the `blockedArrows` rule, a difficulty option:
+What a blocked arrow does depends on the `blockedArrows` rule, a behaviour option (the
+"Blocked arrows stay where they stop" checkbox), not a difficulty level:
 
 | Rule | Blocked arrow | Effect |
 | --- | --- | --- |
 | `return` (default) | Goes back to where it started | Only clearing changes the board, so it **can never deadlock**. Every tap either clears an arrow or leaves the board as it was (still costing a move) |
-| `stay` (hard, the "Hard" checkbox) | Stays where it stopped | Arrows can be pushed into each other's paths, so careless moves can leave the board unsolvable. *New Game* is the way out |
+| `stay` | Stays where it stopped | Arrows can be pushed into each other's paths. A near-miss can leave a board where no arrow can leave; the game then says so (`anyArrowCanLeave`), and shifting arrows or *New Game* is the way out |
+
+`stay` doesn't make puzzles harder to *solve*: every board is solvable by clearing alone,
+so no board ever needs an arrow pushed partway to free another. In simulated play with a
+handful of near-miss taps (an arrow judged free but blocked by one cell), about 1 game in
+5 on the cube, and fewer on the notched cube, ended with no arrow able to leave. That's
+risk, not challenge, so the rule earns no score bonus. Puzzles that require deliberate
+pushes are left for later ("scenarios").
 
 A move is the tapped arrow's `id`, and **every tap on an arrow still on the board is a
 move**, including one that cannot advance. A blocked attempt is recorded, sent to the
@@ -106,8 +114,8 @@ pace     = clamp(arrows × 2.5 s / time, 0.5, 1)   (slow play at most halves it)
 score    = arrows × 10 × accuracy × pace × bonus
 ```
 
-- **Bonuses:** hard mode (`stay`) is ×1.5 and the notched cube ×1.25. They stack, giving
-  ×1.875 for both.
+- **Bonuses:** the notched cube is ×1.25. The blocked-arrows rule earns none (see
+  "Arrows and moves").
 - **Bigger boards are worth more,** since they hold more arrows. A perfect default game
   scores about 1,600.
 - **Tuning:** the constants are at the top of `score.ts`.

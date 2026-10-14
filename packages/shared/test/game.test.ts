@@ -1,5 +1,5 @@
 import {
-  generatePuzzle, applyMove, traceMove, isValidMove, replayMoves, checkWin, isValidOptions, mulberry32,
+  generatePuzzle, applyMove, traceMove, anyArrowCanLeave, isValidMove, replayMoves, checkWin, isValidOptions, mulberry32,
   buildCube, buildFigure, cellKey, neighbor, DIRS, DEFAULT_OPTIONS, OPTION_LIMITS, FIGURE_KINDS,
   type Arrow, type BlockedArrows, type Cell, type FigureKind, type GameState,
 } from '../src/index.js';
@@ -242,6 +242,28 @@ describe("blockedArrows: 'return'", () => {
       }
       expect(checkWin(replayMoves(state, solution(state)))).toBe(true);
     }
+  });
+});
+
+describe('anyArrowCanLeave', () => {
+  it('is true on a fresh board', () => {
+    expect(anyArrowCanLeave(generatePuzzle(4))).toBe(true);
+  });
+
+  it('is false when every arrow blocks another', () => {
+    // Two arrows facing each other across the middle cell.
+    expect(anyArrowCanLeave(board(3, [{ id: 0, cells: [c(0, 0)], dir: 1 }, { id: 1, cells: [c(0, 2)], dir: 3 }]))).toBe(false);
+  });
+
+  it("can turn false under 'stay' after a push, never under 'return'", () => {
+    // Arrow 0 slides to the middle and, staying there, blocks arrow 1 -- which
+    // blocks it in turn.
+    const arrows: Arrow[] = [{ id: 0, cells: [c(1, 0)], dir: 1 }, { id: 1, cells: [c(1, 2)], dir: 3 }, { id: 2, cells: [c(0, 1)], dir: 2 }];
+    // Arrow 2 points down into the middle row, and the bottom row is open.
+    const stay = applyMove(board(3, arrows, 'stay'), 0);
+    expect(stay.arrows[0].cells).toEqual([c(1, 1)]);
+    expect(anyArrowCanLeave(stay)).toBe(false);
+    expect(anyArrowCanLeave(applyMove(board(3, arrows, 'return'), 0))).toBe(true);
   });
 });
 

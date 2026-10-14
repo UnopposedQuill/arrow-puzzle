@@ -8,8 +8,10 @@
 //
 //   'return' (default) -- the arrow goes back to where it started, so only
 //                         clearing changes the board and it can never deadlock.
-//   'stay'   (harder)  -- the arrow stays where it stopped. Careless moves can
-//                         then leave the board unsolvable.
+//   'stay'             -- the arrow stays where it stopped. A different
+//                         behaviour, not a harder puzzle: no board needs a
+//                         push to solve, but careless moves can leave one
+//                         that no arrow can leave (see anyArrowCanLeave()).
 //
 // Every tap on an arrow on the board is a move, including one that leaves the
 // board unchanged: attempting a blocked arrow costs a move.
@@ -247,6 +249,13 @@ export function isValidMove(state: GameState, move: Move): boolean {
 
 export function replayMoves(initialState: GameState, moves: Move[]): GameState {
   return moves.reduce(applyMove, initialState);
+}
+
+// Whether some arrow on the board can leave right now. Under 'return' this is
+// always true until the board is cleared; under 'stay', pushed arrows can end
+// up blocking each other so that none can, and the player needs telling.
+export function anyArrowCanLeave(state: GameState): boolean {
+  return state.arrows.some(a => traceMove(state, a.id)!.exited);
 }
 
 export function checkWin(state: GameState): boolean {

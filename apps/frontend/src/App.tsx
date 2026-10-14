@@ -2,10 +2,10 @@
 //
 // Game loop: generate from a random seed, apply moves locally with the shared
 // logic, and on a win submit seed + options + moves for the server to replay.
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useMutation } from '@apollo/client/react';
 import {
-  generatePuzzle, applyMove, traceMove, checkWin,
+  generatePuzzle, applyMove, traceMove, checkWin, anyArrowCanLeave,
   DEFAULT_OPTIONS, OPTION_LIMITS, FIGURE_KINDS,
   type FigureKind,
   type GameState,
@@ -50,6 +50,10 @@ function App() {
     setSubmitResult(null);
     setAnimations([]);
   };
+
+  // Under 'stay', pushed arrows can end up blocking each other so that none
+  // can leave; say so instead of letting the player hunt for a move.
+  const stuck = useMemo(() => !!state && state.arrows.length > 0 && !anyArrowCanLeave(state), [state]);
 
   const flashBlocked = (id: number) => setBump(b => ({ id, n: (b?.n ?? 0) + 1 }));
 
@@ -134,6 +138,11 @@ function App() {
           {submitResult?.message ?? `Score: ${submitResult?.score}`}
         </div>
       )}
+      {stuck && (
+        <div style={{ color: '#e67e22', fontSize: '14px', textAlign: 'center', maxWidth: '340px' }}>
+          No arrow can leave right now. Shift arrows to open a path, or start a new game.
+        </div>
+      )}
       {submitStatus === 'failed' && (
         <div style={{ color: '#e67e22', fontSize: '14px' }}>
           ⚠️ Offline — score not submitted
@@ -191,7 +200,7 @@ function App() {
             onChange={(e) => handleOptionCommit('blockedArrows')(e.target.checked ? 'stay' : 'return')}
             style={{ width: '18px', height: '18px' }}
           />
-          Hard: blocked arrows stay where they stop
+          Blocked arrows stay where they stop (instead of going back)
         </label>
       </div>
       <div style={{ color: '#aaa', marginTop: '10px', fontSize: '14px', flex: '0 0 auto' }}>

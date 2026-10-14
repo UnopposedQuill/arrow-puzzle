@@ -8,8 +8,11 @@
 //   pace     = clamp(target / time, 0.5, 1)   slow play at most halves it
 //   score    = arrows x POINTS_PER_ARROW x accuracy x pace x bonuses
 //
-// Bigger boards hold more arrows, so harder settings are worth more. Hard mode
-// and the notched cube each multiply the score; they stack.
+// Bigger boards hold more arrows, so harder settings are worth more. The
+// notched cube multiplies the score: its inner walls change how the board
+// reads. The blocked-arrows rule earns nothing: under 'stay' a near-miss can
+// leave the board unfinishable, which is risk, not challenge (no board needs a
+// deliberate push to solve).
 import type { PuzzleOptions } from './game.js';
 
 export const POINTS_PER_ARROW = 10;
@@ -18,8 +21,6 @@ export const TARGET_MS_PER_ARROW = 2500;
 // Slowest play keeps at least this share of the score.
 export const MIN_PACE = 0.5;
 export const BONUSES = {
-  // 'stay': careless moves can make the board unsolvable.
-  hard: 1.5,
   notch: 1.25,
 } as const;
 
@@ -34,6 +35,6 @@ export function scoreAttempt(arrows: number, moves: number, timeMs: number, opti
   const accuracy = arrows / Math.max(moves, arrows);
   const target = arrows * TARGET_MS_PER_ARROW;
   const pace = timeMs <= target ? 1 : Math.max(MIN_PACE, target / timeMs);
-  const bonus = (options.blockedArrows === 'stay' ? BONUSES.hard : 1) * (options.figure === 'notch' ? BONUSES.notch : 1);
+  const bonus = options.figure === 'notch' ? BONUSES.notch : 1;
   return { score: Math.round(arrows * POINTS_PER_ARROW * accuracy * pace * bonus), accuracy, pace, bonus };
 }
