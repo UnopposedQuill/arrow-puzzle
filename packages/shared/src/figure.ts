@@ -21,6 +21,7 @@ export const DIR_DELTAS: Record<Dir, readonly [dRow: number, dCol: number]> = {
   2: [1, 0],
   3: [0, -1],
 };
+export const opposite = (dir: Dir) => ((dir + 2) % 4) as Dir;
 
 // What happens to an arrow whose head crosses an edge. Only 'open' exists so
 // far: the arrow leaves the figure and is cleared. New kinds (e.g. 'sticky',
@@ -114,14 +115,28 @@ export function crossEdge(figure: Figure, cell: Cell, dir: Dir): { cell: Cell; d
   };
 }
 
-// One step forward from `cell` heading `dir`.
-export function step(figure: Figure, cell: Cell, dir: Dir): StepResult {
+// The next cell within the same face, or null at the face's boundary.
+function stepInFace(figure: Figure, cell: Cell, dir: Dir): Cell | null {
   const [dRow, dCol] = DIR_DELTAS[dir];
   const row = cell.row + dRow;
   const col = cell.col + dCol;
-  if (row >= 0 && row < figure.size && col >= 0 && col < figure.size) {
-    return { kind: 'cell', cell: { face: cell.face, row, col }, dir };
-  }
+  return row >= 0 && row < figure.size && col >= 0 && col < figure.size ? { face: cell.face, row, col } : null;
+}
+
+// The cell next to `cell` in `dir`, across a face boundary if need be, with the
+// heading it has there. Pure geometry: edge types don't apply. This is how an
+// arrow's body lies on the figure; only its head is subject to edges (step()).
+export function neighbor(figure: Figure, cell: Cell, dir: Dir): { cell: Cell; dir: Dir } {
+  const inFace = stepInFace(figure, cell, dir);
+  if (inFace) return { cell: inFace, dir };
+  const { cell: across, dir: heading } = crossEdge(figure, cell, dir);
+  return { cell: across, dir: heading };
+}
+
+// One step forward from `cell` heading `dir`.
+export function step(figure: Figure, cell: Cell, dir: Dir): StepResult {
+  const inFace = stepInFace(figure, cell, dir);
+  if (inFace) return { kind: 'cell', cell: inFace, dir };
   const crossing = crossEdge(figure, cell, dir);
   switch (crossing.edge.type) {
     case 'open':

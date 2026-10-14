@@ -1,11 +1,10 @@
-import { buildCube, crossEdge, step, findEdge, dirVector, DIRS, type Cell, type Dir, type Vec3 } from '../src/index.js';
+import { buildCube, crossEdge, step, neighbor, opposite, findEdge, dirVector, DIRS, type Cell, type Vec3 } from '../src/index.js';
 
 const cross = (a: Vec3, b: Vec3): Vec3 => [
   a[1] * b[2] - a[2] * b[1] + 0,
   a[2] * b[0] - a[0] * b[2] + 0,
   a[0] * b[1] - a[1] * b[0] + 0,
 ];
-const opposite = (d: Dir) => ((d + 2) % 4) as Dir;
 
 describe('buildCube', () => {
   const cube = buildCube(3);
@@ -64,6 +63,26 @@ describe('crossEdge', () => {
         }
       }
     });
+  });
+});
+
+describe('neighbor', () => {
+  const cube = buildCube(3);
+
+  it('moves within the face', () => {
+    expect(neighbor(cube, { face: 2, row: 1, col: 1 }, 0)).toEqual({ cell: { face: 2, row: 0, col: 1 }, dir: 0 });
+  });
+
+  it('crosses an edge regardless of its type', () => {
+    const { cell, dir } = crossEdge(cube, { face: 0, row: 0, col: 1 }, 0);
+    expect(neighbor(cube, { face: 0, row: 0, col: 1 }, 0)).toEqual({ cell, dir });
+  });
+
+  it('is undone by going the opposite way', () => {
+    for (const dir of DIRS) {
+      const there = neighbor(cube, { face: 5, row: 0, col: 0 }, dir);
+      expect(neighbor(cube, there.cell, opposite(there.dir))).toEqual({ cell: { face: 5, row: 0, col: 0 }, dir: opposite(dir) });
+    }
   });
 });
 

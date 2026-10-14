@@ -14,7 +14,7 @@
 // Every tap on an arrow on the board is a move, including one that leaves the
 // board unchanged: attempting a blocked arrow costs a move.
 import { mulberry32 } from './rng.js';
-import { buildCube, step, DIRS, DIR_DELTAS, type Cell, type Dir, type Figure } from './figure.js';
+import { buildCube, neighbor, opposite, step, DIRS, type Cell, type Dir, type Figure } from './figure.js';
 
 export interface Arrow {
   id: number;
@@ -40,13 +40,13 @@ export interface PuzzleOptions {
   blockedArrows: BlockedArrows;
 }
 
-export const DEFAULT_OPTIONS: PuzzleOptions = { size: 10, maxLength: 3, blockedArrows: 'return' };
+export const DEFAULT_OPTIONS: PuzzleOptions = { size: 10, maxLength: 8, blockedArrows: 'return' };
 
 // Bounds the server enforces, since options arrive from the client and
 // generation cost grows with them.
 export const OPTION_LIMITS = {
   size: { min: 2, max: 16 },
-  maxLength: { min: 1, max: 5 },
+  maxLength: { min: 1, max: 20 },
 } as const;
 
 export function isValidOptions(options: PuzzleOptions): boolean {
@@ -66,6 +66,10 @@ const occupiedBy = (arrows: Arrow[]) => new Set(arrows.flatMap(a => a.cells.map(
 // Arrows are placed one at a time, and each is kept only if its path from the
 // head to the edge is clear of everything placed before it. Clearing arrows in
 // reverse placement order (highest id first) therefore always solves the board.
+//
+// Long arrows go first: during the first three quarters of the attempts an
+// arrow is kept only if its body reached at least half of maxLength. The rest
+// fill whatever gaps are left, at any length.
 export function generatePuzzle(seed: number, options: PuzzleOptions = DEFAULT_OPTIONS): GameState {
   const rand = mulberry32(seed);
   const randInt = (n: number) => Math.floor(rand() * n);
@@ -75,12 +79,17 @@ export function generatePuzzle(seed: number, options: PuzzleOptions = DEFAULT_OP
   const arrows: Arrow[] = [];
 
   const attempts = figure.faces.length * n * n * 4;
+  const minLength = Math.ceil(options.maxLength / 2);
   for (let i = 0; i < attempts; i++) {
     const head: Cell = { face: randInt(figure.faces.length), row: randInt(n), col: randInt(n) };
     const dir = DIRS[randInt(DIRS.length)];
     if (occupied.has(cellKey(head))) continue;
 
-    const cells = growBody(head, dir, 1 + randInt(options.maxLength), n, occupied, randInt);
+    // Lengths are drawn from the top half of the range, so arrows are long by
+    // default; shorter ones still appear where a body runs out of room.
+    const length = options.maxLength - randInt(Math.ceil(options.maxLength / 2));
+    const cells = growBody(figure, head, dir, length, occupied, rand);
+    if (i < attempts * 0.75 && cells.length < minLength) continue;
     const own = new Set(cells.map(cellKey));
     if (!pathIsClear(figure, head, dir, key => occupied.has(key) || own.has(key))) continue;
 
@@ -90,21 +99,31 @@ export function generatePuzzle(seed: number, options: PuzzleOptions = DEFAULT_OP
   return { figure, arrows, blockedArrows: options.blockedArrows };
 }
 
-// Walks backwards from the head over free cells of the same face, returning the
-// path tail first. The cell right behind the head is always in line with its
-// heading; after that the body may bend. It ends early if it runs out of room.
+// Chance that a body keeps going straight when it could. Straight runs curl
+// into themselves less, so bodies reach their length more often.
+const STRAIGHT_BIAS = 0.6;
+
+// Walks backwards from the head over free cells, returning the path tail first.
+// The body may wrap over edges onto other faces. The cell right behind the head
+// is always in line with its heading; after that the body may bend. It ends
+// early if it runs out of room.
 function growBody(
-  head: Cell, dir: Dir, length: number, n: number, occupied: Set<string>, randInt: (n: number) => number,
+  figure: Figure, head: Cell, dir: Dir, length: number, occupied: Set<string>, rand: () => number,
 ): Cell[] {
   const body = [head];
   const taken = (c: Cell) => occupied.has(cellKey(c)) || body.some(b => cellKey(b) === cellKey(c));
+  // The direction the walk is heading, in the current cell's face terms.
+  let back = opposite(dir);
   while (body.length < length) {
     const current = body[body.length - 1];
-    const options = (body.length === 1 ? [dir] : DIRS)
-      .map(d => ({ face: current.face, row: current.row - DIR_DELTAS[d][0], col: current.col - DIR_DELTAS[d][1] }))
-      .filter(c => c.row >= 0 && c.row < n && c.col >= 0 && c.col < n && !taken(c));
+    const options = (body.length === 1 ? [back] : DIRS)
+      .map(d => ({ d, ...neighbor(figure, current, d) }))
+      .filter(o => !taken(o.cell));
     if (options.length === 0) break;
-    body.push(options[randInt(options.length)]);
+    const straight = options.find(o => o.d === back);
+    const next = straight && rand() < STRAIGHT_BIAS ? straight : options[Math.floor(rand() * options.length)];
+    body.push(next.cell);
+    back = next.dir;
   }
   return body.reverse();
 }

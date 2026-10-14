@@ -1,6 +1,6 @@
 import {
   generatePuzzle, applyMove, isValidMove, replayMoves, checkWin, isValidOptions, mulberry32,
-  buildCube, cellKey, DIR_DELTAS, DEFAULT_OPTIONS, OPTION_LIMITS,
+  buildCube, cellKey, neighbor, DIRS, DEFAULT_OPTIONS, OPTION_LIMITS,
   type Arrow, type BlockedArrows, type Cell, type GameState,
 } from '../src/index.js';
 
@@ -65,19 +65,27 @@ describe('generatePuzzle', () => {
       for (const a of arrows) {
         expect(a.cells.length).toBeGreaterThanOrEqual(1);
         expect(a.cells.length).toBeLessThanOrEqual(options.maxLength);
-        // Consecutive cells are neighbours on one face, and the head points
-        // straight on from the cell behind it.
+        // Consecutive cells are neighbours on the figure, possibly across an
+        // edge, and the head points straight on from the cell behind it.
+        const figure = buildCube(options.size);
         a.cells.slice(1).forEach((cell, i) => {
-          const prev = a.cells[i];
-          expect(cell.face).toBe(prev.face);
-          expect(Math.abs(cell.row - prev.row) + Math.abs(cell.col - prev.col)).toBe(1);
+          expect(DIRS.map(d => neighbor(figure, a.cells[i], d).cell)).toContainEqual(cell);
         });
         if (a.cells.length > 1) {
           const [head, neck] = [a.cells[a.cells.length - 1], a.cells[a.cells.length - 2]];
-          expect([head.row - neck.row, head.col - neck.col]).toEqual([...DIR_DELTAS[a.dir]]);
+          expect(DIRS.map(d => neighbor(figure, neck, d))).toContainEqual({ cell: head, dir: a.dir });
         }
       }
     }
+  });
+
+  it('makes long arrows, some of them spanning more than one face', () => {
+    const { arrows } = generatePuzzle(3, DEFAULT_OPTIONS);
+    const lengths = arrows.map(a => a.cells.length);
+    expect(Math.max(...lengths)).toBe(DEFAULT_OPTIONS.maxLength);
+    // Most arrows reach at least half of maxLength.
+    expect(lengths.filter(l => l >= DEFAULT_OPTIONS.maxLength / 2).length).toBeGreaterThan(arrows.length / 2);
+    expect(arrows.some(a => new Set(a.cells.map(c => c.face)).size > 1)).toBe(true);
   });
 
   it('is always solvable by clearing arrows in reverse placement order', () => {
@@ -119,6 +127,16 @@ describe('applyMove', () => {
     expect(applyMove(state, 0)).toBe(state);
     expect(isValidMove(state, 0)).toBe(true);
     expect(isValidMove(state, 1)).toBe(true);
+  });
+
+  it('drags a body that spans two faces over the edge between them', () => {
+    // Front is face 0 and top is face 4; front row 0 borders top row 2. The
+    // body starts on the top face and turns down onto the front.
+    const blocker: Arrow = { id: 1, cells: [c(2, 1)], dir: 1 };
+    const state = board(3, [{ id: 0, cells: [c(1, 1, 4), c(2, 1, 4), c(0, 1)], dir: 2 }, blocker]);
+    expect(applyMove(state, 0).arrows[0].cells).toEqual([c(2, 1, 4), c(0, 1), c(1, 1)]);
+    // Unblocked, the whole arrow leaves through the front's bottom edge.
+    expect(applyMove({ ...state, arrows: [state.arrows[0]] }, 0).arrows).toEqual([]);
   });
 
   it('is blocked by its own body, but not by its own tail', () => {

@@ -34,10 +34,11 @@ asks the edge type what happens:
 | `open` | The arrow leaves the figure and is cleared | Implemented, used on every edge |
 | `sticky` *(planned)* | The arrow is carried onto the next face and has to clear another edge | Add to `EdgeType`, return `crossing.cell`/`crossing.dir` from `step` |
 
-Once an edge type can carry arrows across, a slide can circle the figure forever (a ring
-of sticky edges). The loops in `applyMove` and generation must then get a step bound.
-Arrow bodies are also generated within a single face for now. Movement already handles
-bodies that span faces.
+Edge types only apply to an arrow's **head**. An arrow's body lies on the figure as a path
+of neighbouring cells (`neighbor`, pure geometry), so bodies can wrap over edges onto
+other faces, and the body follows the head's path over an edge when it slides. Once an
+edge type can carry heads across, a slide can circle the figure forever (a ring of
+sticky edges). The loops in `applyMove` and generation must then get a step bound.
 
 ### Arrows and moves
 
@@ -71,9 +72,19 @@ move list is always replayed under one rule.
 
 ### Generation
 
-Arrows are placed one at a time from random heads, headings and lengths (up to the
-"Length" setting). Each is kept only if its path from head to edge is clear of every
-arrow placed before it. Clearing arrows in **reverse placement order (highest id first)**
+Arrows are placed one at a time from random heads and headings. The body is grown backwards
+from the head over free cells, across edges where it reaches one, preferring to continue
+straight (`STRAIGHT_BIAS`) so it curls into dead ends less often.
+
+- **Lengths** are drawn from the top half of the "Length" setting (default 8, up to 20).
+- **Long arrows first:** during the first three quarters of the attempts, an arrow is kept
+  only if its body reached at least half the maximum. The last quarter fills the gaps at
+  any length.
+- **At the defaults** (10×10, length 8) a board has about 90 arrows averaging about 5.5
+  cells, about a third of them spanning two or more faces, with about 85% of cells filled.
+
+Each arrow is kept only if its path from head to edge is clear of every arrow placed
+before it. Clearing arrows in **reverse placement order (highest id first)**
 therefore always solves a fresh board. The tests use exactly that order as the
 reference solution. Under `return` this also holds for every board reached by play: what
 is left is a subset of the original arrows, and the highest remaining id is never
@@ -89,12 +100,26 @@ more than a few pixels is a drag and never a tap.
 - **See-through faces.** Faces are translucent glass with no grid lines, so arrows on every
   side stay visible and it's easier to keep track of what's left. Arrows on faces turned
   away from the viewer are dimmed and can't be tapped.
-- **Black arrows.** Arrows are black and flash red when an attempt is blocked.
+- **Black arrows.** Arrows are black and flash red when an attempt is blocked. A body that
+  crosses an edge is drawn up to the edge on both faces, so it reads as one line.
+- **Edges under the arrows.** The white edge outline is part of each face's SVG and is drawn
+  *before* the arrows, not as a CSS border around them. Arrows therefore run right up to
+  and over the edge, and an arrow continuing onto another side is visibly unbroken.
+- **Zoom** with the mouse wheel or a two-finger pinch (0.5×–4×). It scales the figure, not
+  the CSS perspective, so the solid keeps its shape, and rotation slows down as you zoom
+  in. The stage fills the whole board area, so a zoomed-in figure can be dragged and
+  tapped wherever it shows. A second finger cancels a pending tap or rotation, and lifting
+  it hands control back to rotation, never to a tap.
 - **Taps are resolved in code, not by the browser.** Chrome's hit testing of SVG inside
   perspective 3D transforms misses often on slanted faces; measured, only about half of
   taps on the two slanted faces of the initial view reached their arrow. Instead,
   `pickCell` traces the tap from the eye (the CSS `perspective` distance) through the
-  screen point onto the face turned toward the viewer. The arrow occupying that cell is
+  screen point onto the face turned toward the viewer, at the current zoom.
+- **Which faces are "near".** A face counts as near, meaning drawn in full and tappable,
+  when the eye is in front of its plane. Because of perspective, that's stricter than its
+  normal pointing toward the screen: a face just past edge-on is seen from behind. The
+  drawing and `pickCell` share one test (`facesViewer`), so every arrow drawn as tappable
+  is tappable. The arrow occupying that cell is
   tapped, so the whole cell is the target, not just the drawn line. Faces and their SVGs
   have `pointer-events: none`, so every press lands on the stage.
 
