@@ -1,0 +1,37 @@
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "cap:check": "node scripts/check-platforms.mjs",
+    "cap:assets": "capacitor-assets generate --android --androidProject mobile/android",
+    "cap:sync": "pnpm run cap:check && pnpm run build && npx cap sync",
+    "cap:run:android": "pnpm run cap:sync && npx cap run android"
+  },
+  "dependencies": {
+    "@apollo/client": "^4.2.12",
+    "@arrow-puzzle/shared": "workspace:*",
+    "graphql": "^17.0.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.5.1",
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.1",
+    "@capacitor/core": "^8.5.1",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "oxlint": "^1.79.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.2"
+  }
+}
