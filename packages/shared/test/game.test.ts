@@ -88,6 +88,17 @@ describe('generatePuzzle', () => {
     expect(arrows.some(a => new Set(a.cells.map(c => c.face)).size > 1)).toBe(true);
   });
 
+  it('fills the default board densely and keeps it solvable', () => {
+    for (let seed = 0; seed < 5; seed++) {
+      const state = generatePuzzle(seed);
+      const filled = state.arrows.reduce((sum, a) => sum + a.cells.length, 0);
+      // Placing arrows at both ends of the clearing order is what gets this
+      // above ~80%; front-only placement left large empty patches.
+      expect(filled / (6 * DEFAULT_OPTIONS.size ** 2)).toBeGreaterThan(0.85);
+      expect(checkWin(replayMoves(state, solution(state)))).toBe(true);
+    }
+  });
+
   it('is always solvable by clearing arrows in reverse placement order', () => {
     for (let seed = 0; seed < 30; seed++) {
       const state = generatePuzzle(seed, options);

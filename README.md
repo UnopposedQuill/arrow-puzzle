@@ -17,7 +17,8 @@ its way
 ### Figures, faces and edges
 
 A puzzle is played on a **figure**: a solid whose faces each carry an N×N grid of cells
-(N is the "Grid" setting: 10 by default, 2–16 allowed). Only the cube exists so far.
+(N is the "Grid" setting: 16 by default, 2–24 allowed). Only the cube exists so far.
+The defaults, a 16 grid with arrows up to 16 cells, are meant as medium difficulty.
 
 Each face has a 3D frame: an outward `normal` and the axes `u` (columns, "right") and `v`
 (rows, "down"), with `u × v = normal`. The frames use CSS orientation (x right, y down,
@@ -76,19 +77,31 @@ Arrows are placed one at a time from random heads and headings. The body is grow
 from the head over free cells, across edges where it reaches one, preferring to continue
 straight (`STRAIGHT_BIAS`) so it curls into dead ends less often.
 
-- **Lengths** are drawn from the top half of the "Length" setting (default 8, up to 20).
+- **Lengths** are drawn from the top half of the "Length" setting (default 16, up to 24).
 - **Long arrows first:** during the first three quarters of the attempts, an arrow is kept
-  only if its body reached at least half the maximum. The last quarter fills the gaps at
-  any length.
-- **At the defaults** (10×10, length 8) a board has about 90 arrows averaging about 5.5
-  cells, about a third of them spanning two or more faces, with about 85% of cells filled.
+  only if its body reached at least half the maximum. The last quarter, and a final sweep
+  that offers every remaining free cell every heading, fill the gaps with arrows of at
+  least `FILLER_MIN_LENGTH` (2) cells.
 
-Each arrow is kept only if its path from head to edge is clear of every arrow placed
-before it. Clearing arrows in **reverse placement order (highest id first)**
-therefore always solves a fresh board. The tests use exactly that order as the
-reference solution. Under `return` this also holds for every board reached by play: what
-is left is a subset of the original arrows, and the highest remaining id is never
-blocked.
+**Solvable by construction, from both ends.** Arrows are cleared in **reverse id order
+(highest first)**, and generation builds that order from both ends:
+
+- an arrow added to the **front** is cleared before all the others, so its path from head to
+  edge must be clear of every arrow already placed;
+- an arrow added to the **back** is cleared after all the others, when the board is empty, so
+  its own path doesn't matter, but it must not sit on the path of any arrow already
+  placed.
+
+With front placement alone, about a fifth of the board stayed empty in visible patches:
+once the board is dense, most free cells have a blocked path in every direction. Many
+such cells can still take a back arrow. The tests use reverse id order as the reference
+solution. Under `return`, every board reached by play stays solvable that way: what is
+left is a subset of the original arrows, and the highest remaining id is never blocked.
+
+**At the defaults** (16/16) a board has about 160 arrows filling about 88.5% of cells, and
+generation takes about 70 ms. Most cells belong to long arrows (8+ cells), and about 30
+arrows are 1–2 cell fillers. `FILLER_MIN_LENGTH` trades fill against stubs: 1 fills about
+91% with about 140 stubs, and 3 fills about 86% with none.
 
 ### Rendering
 

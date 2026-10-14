@@ -40,13 +40,13 @@ export interface PuzzleOptions {
   blockedArrows: BlockedArrows;
 }
 
-export const DEFAULT_OPTIONS: PuzzleOptions = { size: 10, maxLength: 8, blockedArrows: 'return' };
+export const DEFAULT_OPTIONS: PuzzleOptions = { size: 16, maxLength: 16, blockedArrows: 'return' };
 
 // Bounds the server enforces, since options arrive from the client and
 // generation cost grows with them.
 export const OPTION_LIMITS = {
-  size: { min: 2, max: 16 },
-  maxLength: { min: 1, max: 20 },
+  size: { min: 2, max: 24 },
+  maxLength: { min: 1, max: 24 },
 } as const;
 
 export function isValidOptions(options: PuzzleOptions): boolean {
@@ -63,40 +63,88 @@ const occupiedBy = (arrows: Arrow[]) => new Set(arrows.flatMap(a => a.cells.map(
 
 // --- Generation ---
 //
-// Arrows are placed one at a time, and each is kept only if its path from the
-// head to the edge is clear of everything placed before it. Clearing arrows in
-// reverse placement order (highest id first) therefore always solves the board.
+// Arrows are cleared in reverse id order (highest first), and generation
+// builds that order from both ends, which is what keeps every board solvable:
 //
-// Long arrows go first: during the first three quarters of the attempts an
-// arrow is kept only if its body reached at least half of maxLength. The rest
-// fill whatever gaps are left, at any length.
+//   - an arrow added to the FRONT is cleared before all the others, so its path
+//     from head to edge must be clear of every arrow already placed;
+//   - an arrow added to the BACK is cleared after all the others, when the
+//     board is empty, so its own path doesn't matter -- but it must not sit on
+//     the path of any arrow already placed.
+//
+// Front placement alone leaves gaps: once the board is dense, most free cells
+// have a blocked path in every direction. Many of them can still take a back
+// arrow, which fills the board much more evenly.
+//
+// Long arrows go first: during the first three quarters of the random attempts
+// an arrow is kept only if its body reached at least half of maxLength. The
+// rest, and a final sweep over every free cell, fill the gaps with arrows of
+// at least FILLER_MIN_LENGTH.
+// Shortest arrow used to fill gaps. At the defaults (16/16): 1 fills ~91% of
+// cells but adds ~140 one- and two-cell stubs; 2 fills ~88.5% with ~30; 3
+// fills ~86% with none.
+const FILLER_MIN_LENGTH = 2;
+
 export function generatePuzzle(seed: number, options: PuzzleOptions = DEFAULT_OPTIONS): GameState {
   const rand = mulberry32(seed);
   const randInt = (n: number) => Math.floor(rand() * n);
   const figure = buildCube(options.size);
   const n = options.size;
   const occupied = new Set<string>();
-  const arrows: Arrow[] = [];
+  // Cells on the path from head to edge of any placed arrow.
+  const onSomePath = new Set<string>();
+  // Arrows added to the front (cleared first) and to the back (cleared last),
+  // each in the order they were added.
+  const front: Omit<Arrow, 'id'>[] = [];
+  const back: Omit<Arrow, 'id'>[] = [];
+
+  // Lengths are drawn from the top half of the range, so arrows are long by
+  // default; shorter ones still appear where a body runs out of room.
+  const randomLength = () => options.maxLength - randInt(Math.ceil(options.maxLength / 2));
+
+  const place = (head: Cell, dir: Dir, minLength: number): boolean => {
+    if (occupied.has(cellKey(head))) return false;
+    const cells = growBody(figure, head, dir, randomLength(), occupied, rand);
+    if (cells.length < minLength) return false;
+    const keys = cells.map(cellKey);
+    const path = pathKeys(figure, head, dir);
+    // Never pointing into its own body, wherever it goes in the order.
+    if (path.some(k => keys.includes(k))) return false;
+    const toFront = path.every(k => !occupied.has(k));
+    if (!toFront && keys.some(k => onSomePath.has(k))) return false;
+    keys.forEach(k => occupied.add(k));
+    path.forEach(k => onSomePath.add(k));
+    (toFront ? front : back).push({ cells, dir });
+    return true;
+  };
 
   const attempts = figure.faces.length * n * n * 4;
-  const minLength = Math.ceil(options.maxLength / 2);
   for (let i = 0; i < attempts; i++) {
     const head: Cell = { face: randInt(figure.faces.length), row: randInt(n), col: randInt(n) };
-    const dir = DIRS[randInt(DIRS.length)];
-    if (occupied.has(cellKey(head))) continue;
-
-    // Lengths are drawn from the top half of the range, so arrows are long by
-    // default; shorter ones still appear where a body runs out of room.
-    const length = options.maxLength - randInt(Math.ceil(options.maxLength / 2));
-    const cells = growBody(figure, head, dir, length, occupied, rand);
-    if (i < attempts * 0.75 && cells.length < minLength) continue;
-    const own = new Set(cells.map(cellKey));
-    if (!pathIsClear(figure, head, dir, key => occupied.has(key) || own.has(key))) continue;
-
-    cells.forEach(c => occupied.add(cellKey(c)));
-    arrows.push({ id: arrows.length, cells, dir });
+    place(head, DIRS[randInt(DIRS.length)], i < attempts * 0.75 ? Math.ceil(options.maxLength / 2) : FILLER_MIN_LENGTH);
   }
+
+  // Sweep: offer every cell still free, in random order, every heading.
+  const cells = figure.faces.flatMap((_, face) =>
+    Array.from({ length: n * n }, (_, i): Cell => ({ face, row: Math.floor(i / n), col: i % n })));
+  for (const head of shuffle(cells, rand)) {
+    for (const dir of shuffle([...DIRS], rand)) {
+      if (place(head, dir, FILLER_MIN_LENGTH)) break;
+    }
+  }
+
+  // Ids follow the clearing order: the back, latest addition first, then the
+  // front in the order it was built.
+  const arrows = [...back.reverse(), ...front].map((a, id) => ({ id, ...a }));
   return { figure, arrows, blockedArrows: options.blockedArrows };
+}
+
+function shuffle<T>(items: T[], rand: () => number): T[] {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+  return items;
 }
 
 // Chance that a body keeps going straight when it could. Straight runs curl
@@ -128,13 +176,16 @@ function growBody(
   return body.reverse();
 }
 
-function pathIsClear(figure: Figure, head: Cell, dir: Dir, blocked: (key: string) => boolean): boolean {
+// The cells an arrow at `head` heading `dir` passes through on its way to the
+// edge, not counting the head itself.
+function pathKeys(figure: Figure, head: Cell, dir: Dir): string[] {
+  const keys: string[] = [];
   let at = step(figure, head, dir);
   while (at.kind === 'cell') {
-    if (blocked(cellKey(at.cell))) return false;
+    keys.push(cellKey(at.cell));
     at = step(figure, at.cell, at.dir);
   }
-  return true;
+  return keys;
 }
 
 // --- Moves ---
