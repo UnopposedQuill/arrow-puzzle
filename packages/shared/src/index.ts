@@ -14,3 +14,4 @@
 export * from './rng.js';
 export * from './figure.js';
 export * from './game.js';
+export * from './score.js';

@@ -1,6 +1,6 @@
 import { ApolloServer } from '@apollo/server';
 import { startStandaloneServer } from '@apollo/server/standalone';
-import { generatePuzzle, replayMoves, checkWin, isValidOptions, type BlockedArrows, type FigureKind, type Move } from '@arrow-puzzle/shared';
+import { generatePuzzle, replayMoves, checkWin, isValidOptions, scoreAttempt, type BlockedArrows, type FigureKind, type Move } from '@arrow-puzzle/shared';
 
 // The arguments mirror the shared contract: the seed and generation options
 // (figure, size, maxLength, blockedArrows) rebuild the board and its rules, the moves
@@ -61,15 +61,16 @@ const resolvers = {
           };
         }
 
-        // 4. Calculate score: fewer moves + faster time = higher score
-        const score = Math.max(0, 1000 - moves.length * 5 - Math.floor(timeMs / 1000));
+        // 4. Score it: see packages/shared/src/score.ts for the criteria.
+        const { score, accuracy, pace, bonus } = scoreAttempt(initialState.arrows.length, moves.length, timeMs, options);
+        const percent = (x: number) => `${Math.round(x * 100)}%`;
 
         // 5. (Optional) Save to leaderboard here
 
         return {
           success: true,
           score,
-          message: `Valid puzzle solved! Score: ${score}`
+          message: `Valid puzzle solved! Score: ${score} (accuracy ${percent(accuracy)}, pace ${percent(pace)}${bonus > 1 ? `, bonus ×${bonus}` : ''})`
         };
       } catch (error) {
         // Moves are untrusted input; anything the shared logic throws on must

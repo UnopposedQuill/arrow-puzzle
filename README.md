@@ -94,6 +94,27 @@ The rule is part of `PuzzleOptions` and is copied into `GameState`, because repl
 on it. It is sent to the server with the attempt, and changing it starts a new game, so one
 move list is always replayed under one rule.
 
+### Scoring
+
+The server scores a win after replaying it (`scoreAttempt`, `packages/shared/src/score.ts`).
+Every arrow needs exactly one tap that clears it, so a board's minimum is one move per
+arrow, and every extra move was a blocked attempt:
+
+```
+accuracy = arrows / moves                         (1 with no blocked attempts)
+pace     = clamp(arrows × 2.5 s / time, 0.5, 1)   (slow play at most halves it)
+score    = arrows × 10 × accuracy × pace × bonus
+```
+
+- **Bonuses:** hard mode (`stay`) is ×1.5 and the notched cube ×1.25. They stack, giving
+  ×1.875 for both.
+- **Bigger boards are worth more,** since they hold more arrows. A perfect default game
+  scores about 1,600.
+- **Tuning:** the constants are at the top of `score.ts`.
+- **What you see:** the win message shows the score with its accuracy, pace and bonus.
+- **Why it replaced the scaffold's formula:** `1000 − 5 × moves − seconds` charged every
+  required move, so real games on a 16×16 cube scored 0.
+
 ### Generation
 
 Arrows are placed one at a time from random heads and headings. The body is grown backwards
