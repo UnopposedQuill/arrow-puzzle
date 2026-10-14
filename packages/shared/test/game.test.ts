@@ -1,7 +1,7 @@
 import {
-  generatePuzzle, applyMove, isValidMove, replayMoves, checkWin, isValidOptions, mulberry32,
-  buildCube, cellKey, neighbor, DIRS, DEFAULT_OPTIONS, OPTION_LIMITS,
-  type Arrow, type BlockedArrows, type Cell, type GameState,
+  generatePuzzle, applyMove, traceMove, isValidMove, replayMoves, checkWin, isValidOptions, mulberry32,
+  buildCube, buildFigure, cellKey, neighbor, DIRS, DEFAULT_OPTIONS, OPTION_LIMITS, FIGURE_KINDS,
+  type Arrow, type BlockedArrows, type Cell, type FigureKind, type GameState,
 } from '../src/index.js';
 
 const c = (row: number, col: number, face = 0): Cell => ({ face, row, col });
@@ -20,8 +20,8 @@ describe('mulberry32', () => {
 describe('isValidOptions', () => {
   it('accepts options within the limits', () => {
     expect(isValidOptions(DEFAULT_OPTIONS)).toBe(true);
-    expect(isValidOptions({ size: OPTION_LIMITS.size.min, maxLength: OPTION_LIMITS.maxLength.min, blockedArrows: 'stay' })).toBe(true);
-    expect(isValidOptions({ size: OPTION_LIMITS.size.max, maxLength: OPTION_LIMITS.maxLength.max, blockedArrows: 'return' })).toBe(true);
+    expect(isValidOptions({ figure: 'cube', size: OPTION_LIMITS.size.min, maxLength: OPTION_LIMITS.maxLength.min, blockedArrows: 'stay' })).toBe(true);
+    expect(isValidOptions({ figure: 'notch', size: OPTION_LIMITS.size.max, maxLength: OPTION_LIMITS.maxLength.max, blockedArrows: 'return' })).toBe(true);
   });
 
   it('rejects out-of-range, fractional or unknown options', () => {
@@ -30,11 +30,12 @@ describe('isValidOptions', () => {
     expect(isValidOptions({ ...DEFAULT_OPTIONS, maxLength: OPTION_LIMITS.maxLength.max + 1 })).toBe(false);
     expect(isValidOptions({ ...DEFAULT_OPTIONS, size: 2.5 })).toBe(false);
     expect(isValidOptions({ ...DEFAULT_OPTIONS, blockedArrows: 'bounce' as BlockedArrows })).toBe(false);
+    expect(isValidOptions({ ...DEFAULT_OPTIONS, figure: 'sphere' as FigureKind })).toBe(false);
   });
 });
 
 describe('generatePuzzle', () => {
-  const options = { size: 4, maxLength: 4, blockedArrows: 'stay' as const };
+  const options = { figure: 'cube' as const, size: 4, maxLength: 4, blockedArrows: 'stay' as const };
 
   it('is deterministic per seed', () => {
     expect(generatePuzzle(123, options)).toEqual(generatePuzzle(123, options));
@@ -67,13 +68,13 @@ describe('generatePuzzle', () => {
         expect(a.cells.length).toBeLessThanOrEqual(options.maxLength);
         // Consecutive cells are neighbours on the figure, possibly across an
         // edge, and the head points straight on from the cell behind it.
-        const figure = buildCube(options.size);
+        const figure = buildFigure(options.figure, options.size);
         a.cells.slice(1).forEach((cell, i) => {
           expect(DIRS.map(d => neighbor(figure, a.cells[i], d).cell)).toContainEqual(cell);
         });
         if (a.cells.length > 1) {
           const [head, neck] = [a.cells[a.cells.length - 1], a.cells[a.cells.length - 2]];
-          expect(DIRS.map(d => neighbor(figure, neck, d))).toContainEqual({ cell: head, dir: a.dir });
+          expect(DIRS.map(d => neighbor(figure, neck, d))).toContainEqual(expect.objectContaining({ cell: head, dir: a.dir }));
         }
       }
     }
@@ -88,15 +89,19 @@ describe('generatePuzzle', () => {
     expect(arrows.some(a => new Set(a.cells.map(c => c.face)).size > 1)).toBe(true);
   });
 
-  it('fills the default board densely and keeps it solvable', () => {
+  it.each(FIGURE_KINDS)('fills a default-size %s densely and keeps it solvable', figure => {
     for (let seed = 0; seed < 5; seed++) {
-      const state = generatePuzzle(seed);
+      const state = generatePuzzle(seed, { ...DEFAULT_OPTIONS, figure });
       const filled = state.arrows.reduce((sum, a) => sum + a.cells.length, 0);
       // Placing arrows at both ends of the clearing order is what gets this
       // above ~80%; front-only placement left large empty patches.
-      expect(filled / (6 * DEFAULT_OPTIONS.size ** 2)).toBeGreaterThan(0.85);
+      expect(filled / (state.figure.faces.length * state.figure.size ** 2)).toBeGreaterThan(0.85);
       expect(checkWin(replayMoves(state, solution(state)))).toBe(true);
     }
+  });
+
+  it('builds the figure the options ask for', () => {
+    expect(generatePuzzle(1, { ...DEFAULT_OPTIONS, figure: 'notch' }).figure.kind).toBe('notch');
   });
 
   it('is always solvable by clearing arrows in reverse placement order', () => {
@@ -168,10 +173,49 @@ describe('applyMove', () => {
   });
 
   it('never mutates its input', () => {
-    const state = generatePuzzle(9, { size: 3, maxLength: 3, blockedArrows: 'stay' });
+    const state = generatePuzzle(9, { figure: 'cube', size: 3, maxLength: 3, blockedArrows: 'stay' });
     const before = JSON.parse(JSON.stringify(state));
     state.arrows.forEach(a => applyMove(state, a.id));
     expect(state).toEqual(before);
+  });
+});
+
+describe('traceMove', () => {
+  it('lists every cell the head slides through, and how the slide ends', () => {
+    const blocker: Arrow = { id: 1, cells: [c(0, 3)], dir: 2 };
+    const state = board(4, [{ id: 0, cells: [c(0, 0)], dir: 1 }, blocker]);
+    expect(traceMove(state, 0)).toEqual({
+      arrow: state.arrows[0],
+      path: [{ cell: c(0, 1), dir: 1 }, { cell: c(0, 2), dir: 1 }],
+      exited: false,
+    });
+    expect(traceMove({ ...state, arrows: [state.arrows[0]] }, 0)).toMatchObject({ exited: true });
+    expect(traceMove(state, 9)).toBeNull();
+  });
+
+  it('clears an arrow heading into the notch at the inner corner', () => {
+    // 4x4-cell faces.
+    const state: GameState = { figure: buildFigure('notch', 8), arrows: [], blockedArrows: 'return' };
+    const { faces } = state.figure;
+    // A one-cell arrow two cells from a concave corner, heading into it.
+    const f = faces.findIndex(face => face.sides.includes('concave'));
+    const dir = faces[f].sides.indexOf('concave') as 0 | 1 | 2 | 3;
+    const head: Cell = [{ face: f, row: 1, col: 1 }, { face: f, row: 1, col: 2 }, { face: f, row: 2, col: 1 }, { face: f, row: 1, col: 1 }][dir];
+    const arrow: Arrow = { id: 0, cells: [head], dir };
+    const trace = traceMove({ ...state, arrows: [arrow] }, 0)!;
+    // One step to the corner, then it leaves its side into the wall.
+    expect(trace.path).toHaveLength(1);
+    expect(trace.path[0].cell.face).toBe(f);
+    expect(trace.exited).toBe(true);
+  });
+
+  it('carries an arrow straight over a flat seam', () => {
+    const figure = buildFigure('notch', 4);
+    const f = figure.faces.findIndex(face => face.sides[1] === 'flat');
+    const arrow: Arrow = { id: 0, cells: [{ face: f, row: 0, col: figure.size - 1 }], dir: 1 };
+    const trace = traceMove({ figure, arrows: [arrow], blockedArrows: 'return' }, 0)!;
+    expect(trace.path[0].cell.face).not.toBe(f);
+    expect(figure.faces[trace.path[0].cell.face].normal).toEqual(figure.faces[f].normal);
   });
 });
 
@@ -188,7 +232,7 @@ describe("blockedArrows: 'return'", () => {
   });
 
   it('can never deadlock: any sequence of taps leaves the board solvable', () => {
-    const options = { size: 4, maxLength: 4, blockedArrows: 'return' as const };
+    const options = { figure: 'cube' as const, size: 4, maxLength: 4, blockedArrows: 'return' as const };
     for (let seed = 0; seed < 20; seed++) {
       const rand = mulberry32(seed);
       let state = generatePuzzle(seed, options);
@@ -202,7 +246,7 @@ describe("blockedArrows: 'return'", () => {
 });
 
 describe('win validation', () => {
-  const options = { size: 3, maxLength: 3, blockedArrows: 'stay' as const };
+  const options = { figure: 'cube' as const, size: 3, maxLength: 3, blockedArrows: 'stay' as const };
 
   it('proves a win from seed and moves alone', () => {
     const moves = solution(generatePuzzle(2024, options));

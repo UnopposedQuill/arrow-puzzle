@@ -1,9 +1,9 @@
 import { ApolloServer } from '@apollo/server';
 import { startStandaloneServer } from '@apollo/server/standalone';
-import { generatePuzzle, replayMoves, checkWin, isValidOptions, type BlockedArrows, type Move } from '@arrow-puzzle/shared';
+import { generatePuzzle, replayMoves, checkWin, isValidOptions, type BlockedArrows, type FigureKind, type Move } from '@arrow-puzzle/shared';
 
 // The arguments mirror the shared contract: the seed and generation options
-// (size, maxLength, blockedArrows) rebuild the board and its rules, the moves
+// (figure, size, maxLength, blockedArrows) rebuild the board and its rules, the moves
 // (tapped arrow ids) replay it.
 const typeDefs = `#graphql
   type SubmitResponse {
@@ -18,8 +18,14 @@ const typeDefs = `#graphql
     stay
   }
 
+  # Mirrors FigureKind in packages/shared.
+  enum FigureKind {
+    cube
+    notch
+  }
+
   type Mutation {
-    submitAttempt(seed: Int!, moves: [Int!]!, timeMs: Int!, size: Int!, maxLength: Int!, blockedArrows: BlockedArrows!): SubmitResponse!
+    submitAttempt(seed: Int!, moves: [Int!]!, timeMs: Int!, figure: FigureKind!, size: Int!, maxLength: Int!, blockedArrows: BlockedArrows!): SubmitResponse!
   }
 
   type Query {
@@ -29,11 +35,11 @@ const typeDefs = `#graphql
 
 const resolvers = {
   Mutation: {
-    submitAttempt: async (_: any, { seed, moves, timeMs, size, maxLength, blockedArrows }: { seed: number; moves: Move[]; timeMs: number; size: number; maxLength: number; blockedArrows: BlockedArrows }) => {
+    submitAttempt: async (_: any, { seed, moves, timeMs, figure, size, maxLength, blockedArrows }: { seed: number; moves: Move[]; timeMs: number; figure: FigureKind; size: number; maxLength: number; blockedArrows: BlockedArrows }) => {
       try {
         // 0. Options come from the client; out-of-range ones could make
         //    generation arbitrarily expensive.
-        const options = { size, maxLength, blockedArrows };
+        const options = { figure, size, maxLength, blockedArrows };
         if (!isValidOptions(options)) {
           return { success: false, score: 0, message: 'Invalid puzzle options.' };
         }

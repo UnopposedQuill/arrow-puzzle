@@ -14,7 +14,7 @@
 // Every tap on an arrow on the board is a move, including one that leaves the
 // board unchanged: attempting a blocked arrow costs a move.
 import { mulberry32 } from './rng.js';
-import { buildCube, neighbor, opposite, step, DIRS, type Cell, type Dir, type Figure } from './figure.js';
+import { buildFigure, neighbor, opposite, step, DIRS, FIGURE_KINDS, type Cell, type Dir, type Figure, type FigureKind } from './figure.js';
 
 export interface Arrow {
   id: number;
@@ -35,12 +35,13 @@ export interface GameState {
 export type Move = number;
 
 export interface PuzzleOptions {
+  figure: FigureKind;
   size: number;
   maxLength: number;
   blockedArrows: BlockedArrows;
 }
 
-export const DEFAULT_OPTIONS: PuzzleOptions = { size: 16, maxLength: 16, blockedArrows: 'return' };
+export const DEFAULT_OPTIONS: PuzzleOptions = { figure: 'cube', size: 16, maxLength: 16, blockedArrows: 'return' };
 
 // Bounds the server enforces, since options arrive from the client and
 // generation cost grows with them.
@@ -50,7 +51,7 @@ export const OPTION_LIMITS = {
 } as const;
 
 export function isValidOptions(options: PuzzleOptions): boolean {
-  return BLOCKED_ARROWS.includes(options.blockedArrows) &&
+  return BLOCKED_ARROWS.includes(options.blockedArrows) && FIGURE_KINDS.includes(options.figure) &&
     (Object.keys(OPTION_LIMITS) as (keyof typeof OPTION_LIMITS)[]).every(key => {
       const value = options[key];
       return Number.isInteger(value) && value >= OPTION_LIMITS[key].min && value <= OPTION_LIMITS[key].max;
@@ -88,8 +89,8 @@ const FILLER_MIN_LENGTH = 2;
 export function generatePuzzle(seed: number, options: PuzzleOptions = DEFAULT_OPTIONS): GameState {
   const rand = mulberry32(seed);
   const randInt = (n: number) => Math.floor(rand() * n);
-  const figure = buildCube(options.size);
-  const n = options.size;
+  const figure = buildFigure(options.figure, options.size);
+  const n = figure.size;
   const occupied = new Set<string>();
   // Cells on the path from head to edge of any placed arrow.
   const onSomePath = new Set<string>();
@@ -188,27 +189,53 @@ function pathKeys(figure: Figure, head: Cell, dir: Dir): string[] {
   return keys;
 }
 
+
+
 // --- Moves ---
-// Moves arrive from the client and are untrusted: anything that is not a
-// movable arrow leaves the state untouched rather than throwing.
-export function applyMove(state: GameState, move: Move): GameState {
+
+export interface Trace {
+  arrow: Arrow;
+  // Where the head goes, one cell per step, with its heading there.
+  path: { cell: Cell; dir: Dir }[];
+  // Whether the head went over an open edge, clearing the arrow; otherwise it
+  // was blocked after `path`.
+  exited: boolean;
+}
+
+// How a tap on `move` plays out: the cells the head slides through and how
+// the slide ends. applyMove() is built on it, and the frontend animates it, so
+// the animation always shows exactly what the rules did. Null when `move` is
+// not an arrow on the board.
+export function traceMove(state: GameState, move: Move): Trace | null {
   const arrow = state.arrows.find(a => a.id === move);
-  if (!arrow) return state;
+  if (!arrow) return null;
 
   const others = occupiedBy(state.arrows.filter(a => a !== arrow));
+  const path: Trace['path'] = [];
   let { cells, dir } = arrow;
   for (;;) {
     const next = step(state.figure, cells[cells.length - 1], dir);
-    if (next.kind === 'exit') {
-      return { ...state, arrows: state.arrows.filter(a => a !== arrow) };
-    }
+    if (next.kind === 'exit') return { arrow, path, exited: true };
     const key = cellKey(next.cell);
     // The tail vacates as the head advances, so only the rest of the body blocks.
     if (others.has(key) || cells.slice(1).some(c => cellKey(c) === key)) break;
     cells = [...cells.slice(1), next.cell];
     dir = next.dir;
+    path.push({ cell: next.cell, dir });
   }
-  if (cells === arrow.cells || state.blockedArrows === 'return') return state;
+  return { arrow, path, exited: false };
+}
+
+// Moves arrive from the client and are untrusted: anything that is not a
+// movable arrow leaves the state untouched rather than throwing.
+export function applyMove(state: GameState, move: Move): GameState {
+  const trace = traceMove(state, move);
+  if (!trace) return state;
+  const { arrow, path, exited } = trace;
+  if (exited) return { ...state, arrows: state.arrows.filter(a => a !== arrow) };
+  if (path.length === 0 || state.blockedArrows === 'return') return state;
+  const cells = [...arrow.cells, ...path.map(p => p.cell)].slice(path.length);
+  const dir = path[path.length - 1].dir;
   return { ...state, arrows: state.arrows.map(a => (a === arrow ? { ...a, cells, dir } : a)) };
 }
 

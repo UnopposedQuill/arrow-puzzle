@@ -2,24 +2,27 @@
 //
 // Game loop: generate from a random seed, apply moves locally with the shared
 // logic, and on a win submit seed + options + moves for the server to replay.
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useMutation } from '@apollo/client/react';
 import {
-  generatePuzzle, applyMove, checkWin, isValidMove,
-  DEFAULT_OPTIONS, OPTION_LIMITS,
+  generatePuzzle, applyMove, traceMove, checkWin,
+  DEFAULT_OPTIONS, OPTION_LIMITS, FIGURE_KINDS,
+  type FigureKind,
   type GameState,
   type Move,
   type PuzzleOptions,
 } from '@arrow-puzzle/shared';
 import { SUBMIT_ATTEMPT, type SubmitAttemptData, type SubmitAttemptVars } from './graphql/mutations';
 import { CountStepper } from './components/CountStepper';
-import { Figure3D } from './components/Figure3D';
+import { Figure3D, type SlideAnimation } from './components/Figure3D';
 import './App.css';
 
 const TITLE = 'Arrow Puzzle';
 
-// The figure's bounding box is roughly 1.75 face widths once rotated, and the
-// stage is two; keep it clear of the header and controls on a phone.
+const FIGURE_NAMES: Record<FigureKind, string> = { cube: 'Cube', notch: 'Notched cube' };
+
+// Side of the whole figure, in px. Its bounding box is roughly 1.75 sides once
+// rotated; keep it clear of the header and controls on a phone.
 const faceSize = () => Math.floor(Math.min(window.innerWidth * 0.48, window.innerHeight * 0.26, 220));
 
 function App() {
@@ -34,6 +37,10 @@ function App() {
   const [size, setSize] = useState(faceSize);
   // The arrow that last failed to move; `n` restarts the bump on repeat taps.
   const [bump, setBump] = useState<{ id: number; n: number } | null>(null);
+  // Moves being animated. The board itself is updated at once; these only
+  // show how it got there.
+  const [animations, setAnimations] = useState<SlideAnimation[]>([]);
+  const nextAnimation = useRef(0);
 
   const [submitAttempt] = useMutation<SubmitAttemptData, SubmitAttemptVars>(SUBMIT_ATTEMPT);
 
@@ -52,7 +59,19 @@ function App() {
     setWin(false);
     setSubmitStatus('idle');
     setSubmitResult(null);
+    setAnimations([]);
   };
+
+  const flashBlocked = (id: number) => setBump(b => ({ id, n: (b?.n ?? 0) + 1 }));
+
+  const handleAnimationDone = useCallback((key: number) => {
+    setAnimations(list => {
+      const done = list.find(a => a.key === key);
+      // Under 'stay', an arrow that slid into its blocker flashes red where it stopped.
+      if (done && !done.trace.exited && done.rule === 'stay') flashBlocked(done.trace.arrow.id);
+      return list.filter(a => a.key !== key);
+    });
+  }, []);
 
   // Generate the first puzzle once. Regeneration is deliberate from here on
   // (New Game, or committing a settings change), so a half-typed number never
@@ -71,17 +90,23 @@ function App() {
   const handleMove = (move: Move) => {
     if (!state || win) return;
 
-    if (!isValidMove(state, move)) return;
+    const trace = traceMove(state, move);
+    if (!trace) return;
 
     // Every attempt is a move, including one on a blocked arrow; the server
     // replays (and scores) the full list.
     const newHistory = [...moveHistory, move];
     setMoveHistory(newHistory);
-    const newState = applyMove(state, move);
-    if (newState === state) {
-      setBump(b => ({ id: move, n: (b?.n ?? 0) + 1 }));
-      return;
+    if (trace.path.length === 0 && !trace.exited) {
+      // Nowhere to go at all: just the nudge.
+      flashBlocked(move);
+    } else {
+      const animation = { key: nextAnimation.current++, trace, rule: state.blockedArrows, start: performance.now() };
+      // A new tap on an arrow that is still sliding replaces its slide.
+      setAnimations(list => [...list.filter(a => a.trace.arrow.id !== move), animation]);
     }
+    const newState = applyMove(state, move);
+    if (newState === state) return;
     setState(newState);
 
     if (checkWin(newState)) {
@@ -129,7 +154,12 @@ function App() {
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         width: '100%', flex: '1 1 auto', minHeight: 0,
       }}>
-        {state && <Figure3D figure={state.figure} arrows={state.arrows} faceSize={size} bump={bump} onArrowTap={handleMove} />}
+        {state && (
+          <Figure3D
+            figure={state.figure} arrows={state.arrows} faceSize={size} bump={bump}
+            animations={animations} onAnimationDone={handleAnimationDone} onArrowTap={handleMove}
+          />
+        )}
       </div>
       <div style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -139,6 +169,17 @@ function App() {
           New Game
         </button>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <label style={{ color: 'white', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            Figure:
+            <select
+              value={options.figure}
+              onChange={(e) => handleOptionCommit('figure')(e.target.value as FigureKind)}
+              // 16px keeps mobile browsers from zooming in on focus.
+              style={{ fontSize: '16px', padding: '4px' }}
+            >
+              {FIGURE_KINDS.map(kind => <option key={kind} value={kind}>{FIGURE_NAMES[kind]}</option>)}
+            </select>
+          </label>
           <CountStepper
             label="Grid"
             value={options.size}

@@ -16,30 +16,49 @@ its way
 
 ### Figures, faces and edges
 
-A puzzle is played on a **figure**: a solid whose faces each carry an N×N grid of cells
-(N is the "Grid" setting: 16 by default, 2–24 allowed). Only the cube exists so far.
-The defaults, a 16 grid with arrows up to 16 cells, are meant as medium difficulty.
+A puzzle is played on a **figure**: a cube split into blocks × blocks × blocks subcubes, some
+of them removed. The "Figure" setting picks one:
 
-Each face has a 3D frame: an outward `normal` and the axes `u` (columns, "right") and `v`
-(rows, "down"), with `u × v = normal`. The frames use CSS orientation (x right, y down,
-z toward the viewer). The frontend therefore places each face with a `matrix3d` built
-straight from its frame, and backface culling works because every face's front side
-points outwards.
+| Figure | Blocks | Removed | Faces |
+| --- | --- | --- | --- |
+| `cube` | 1 | none | 6 |
+| `notch` ("Notched cube") | 2×2×2 | the top-front-right block | 24 |
 
-Faces meet along **edges, and every edge has a type**. Stepping off a face goes through
-`crossEdge`, which works out the cell and heading on the neighbouring face. `step` then
-asks the edge type what happens:
+The "Grid" setting (16 by default, 2–24 allowed) is the number of cells across the whole
+figure's side. A figure split into blocks rounds it up so it divides evenly. The defaults,
+a 16 grid with arrows up to 16 cells, are meant as medium difficulty. New figures are a
+new entry in `SHAPES` (`packages/shared/src/figure.ts`): the faces, edges and movement
+follow from which blocks are removed.
+
+The surface is made of **faces**, one per exposed side of a block, each a square grid of
+cells. Each face has a 3D frame: an outward `normal`, the axes `u` (columns, "right") and
+`v` (rows, "down") with `u × v = normal`, and the `origin` corner where its grid starts.
+The frames use CSS orientation (x right, y down, z toward the viewer), so the frontend
+places each face with a `matrix3d` built straight from its frame.
+
+Moving off a cell (`neighbor`, pure geometry, worked out on the solid's voxel lattice) goes
+one of three ways:
+
+| Crossing | Surface | In the game |
+| --- | --- | --- |
+| `flat` | Carries on in the same plane, within a face or onto the next face of the same side | Not an edge: arrows carry straight on |
+| `convex` | Folds away: an outer edge | An edge |
+| `concave` | Folds up into a wall: an inner corner of the notch | An edge |
+
+**An arrow is cleared once its head leaves a side over a non-sticky edge**, outer or inner.
+At an inner corner it visibly slides into the wall as it clears, which is accepted. Edges
+carry a type, and `step` asks it what happens:
 
 | Edge type | Effect | Status |
 | --- | --- | --- |
-| `open` | The arrow leaves the figure and is cleared | Implemented, used on every edge |
-| `sticky` *(planned)* | The arrow is carried onto the next face and has to clear another edge | Add to `EdgeType`, return `crossing.cell`/`crossing.dir` from `step` |
+| `open` | The arrow leaves its side and is cleared | Implemented, used on every edge |
+| `sticky` *(planned)* | The arrow is carried onto the next face and has to clear another edge | Add to `EdgeType`, return the neighbouring cell from `step` |
 
-Edge types only apply to an arrow's **head**. An arrow's body lies on the figure as a path
-of neighbouring cells (`neighbor`, pure geometry), so bodies can wrap over edges onto
-other faces, and the body follows the head's path over an edge when it slides. Once an
-edge type can carry heads across, a slide can circle the figure forever (a ring of
-sticky edges). The loops in `applyMove` and generation must then get a step bound.
+Edge types only apply to an arrow's **head**. Its body lies on the figure as a path of
+neighbouring cells, so bodies wrap over edges onto other faces, and the body follows the
+head's path when it slides. With only `open` edges a head stays on one flat side until it
+leaves it, so no slide can loop. Once `sticky` exists, a head could circle the figure, and
+the loops in `traceMove` and generation will need a step bound.
 
 ### Arrows and moves
 
@@ -51,6 +70,10 @@ Tapping it:
 - is **cleared** as soon as its head crosses an `open` edge.
 - is **blocked** when the next cell is taken by another arrow, or by its own body. Its
   own tail doesn't count, because the tail moves out as the head moves in.
+
+`traceMove` works out a tap's outcome: the cells the head slides through, and whether it
+left the figure or was blocked. `applyMove` is built on it, and the frontend animates
+exactly that path, so the animation always shows what the rules did.
 
 What a blocked arrow does depends on the `blockedArrows` rule, a difficulty option:
 
@@ -98,8 +121,10 @@ such cells can still take a back arrow. The tests use reverse id order as the re
 solution. Under `return`, every board reached by play stays solvable that way: what is
 left is a subset of the original arrows, and the highest remaining id is never blocked.
 
-**At the defaults** (16/16) a board has about 160 arrows filling about 88.5% of cells, and
-generation takes about 70 ms. Most cells belong to long arrows (8+ cells), and about 30
+**At the defaults** (16/16) a board has about 160 arrows filling about 88.5% of cells (the
+notched cube about 90%), and generation takes about 90–130 ms. At the 24/24 maximum it takes
+about 180–250 ms, and the server's replay about 80 ms. `neighbor` results are cached per
+figure object (a `WeakMap`, so the game state stays plain data), which halved those times. Most cells belong to long arrows (8+ cells), and about 30
 arrows are 1–2 cell fillers. `FILLER_MIN_LENGTH` trades fill against stubs: 1 fills about
 91% with about 140 stubs, and 3 fills about 86% with none.
 
@@ -115,6 +140,16 @@ more than a few pixels is a drag and never a tap.
   away from the viewer are dimmed and can't be tapped.
 - **Black arrows.** Arrows are black and flash red when an attempt is blocked. A body that
   crosses an edge is drawn up to the edge on both faces, so it reads as one line.
+- **Slide animation.** A tap animates the arrow along the path `traceMove` reported, snake
+  style, at about 30 cells per second (kept between 0.18 s and 0.9 s). An arrow that clears
+  slides off its side into the air, or into the wall at an inner corner, and fades out. A
+  blocked arrow slides to its blocker and back, red on the way back, under `return`. Under
+  `stay` it slides to where it stops and flashes red there. A tap that can't move the arrow
+  at all keeps the short nudge. The board updates at once; the animation is only visual,
+  and tapping an arrow mid-slide replaces its slide. Drawing lives in `arrowGeometry.ts`:
+  an arrow is a window sliding along a track (body, then path, then cells past the edge),
+  and a resting arrow is the same window at position 0.
+- **Edge lines only on real edges.** Flat seams between faces of one side get no line.
 - **Edges under the arrows.** The white edge outline is part of each face's SVG and is drawn
   *before* the arrows, not as a CSS border around them. Arrows therefore run right up to
   and over the edge, and an arrow continuing onto another side is visibly unbroken.
@@ -127,7 +162,8 @@ more than a few pixels is a drag and never a tap.
   perspective 3D transforms misses often on slanted faces; measured, only about half of
   taps on the two slanted faces of the initial view reached their arrow. Instead,
   `pickCell` traces the tap from the eye (the CSS `perspective` distance) through the
-  screen point onto the face turned toward the viewer, at the current zoom.
+  screen point onto the *nearest* face turned toward the viewer, at the current zoom. On
+  the notched cube faces can stand in front of each other, hence nearest.
 - **Which faces are "near".** A face counts as near, meaning drawn in full and tappable,
   when the eye is in front of its plane. Because of perspective, that's stricter than its
   normal pointing toward the screen: a face just past edge-on is seen from behind. The
@@ -135,6 +171,16 @@ more than a few pixels is a drag and never a tap.
   is tappable. The arrow occupying that cell is
   tapped, so the whole cell is the target, not just the drawn line. Faces and their SVGs
   have `pointer-events: none`, so every press lands on the stage.
+
+**Known limitations.**
+
+- On the notched cube, once rotated, an outer face can stand in front of an inner wall.
+  The wall's arrows still show in black through the glass, as if tappable, but a tap there
+  goes to the face in front, which is the correct target.
+- Every board is solved by tapping all ids from highest to lowest, because ids follow the
+  clearing order. That isn't a new hole, since the client has the generator and can always
+  compute a solution. If scores ever need to resist cheating, shuffle ids before handing a
+  board out and give the server the mapping.
 
 ## Reusing this scaffold for a new game
 
@@ -196,8 +242,8 @@ arrow-puzzle/
 │       ├── src/
 │       │   ├── index.ts       (Re-exports; documents the shared contract)
 │       │   ├── rng.ts         (Seeded PRNG)
-│       │   ├── figure.ts      (Faces, typed edges, crossing between faces)
-│       │   └── game.ts        (Arrows, moves, generation, win check)
+│       │   ├── figure.ts      (Figures from blocks: faces, edges, neighbouring cells)
+│       │   └── game.ts        (Arrows, traceMove/applyMove, generation, win check)
 │       └── test/
 │           ├── figure.test.ts
 │           └── game.test.ts
@@ -220,7 +266,8 @@ arrow-puzzle/
     │       ├── App.css
     │       ├── components/
     │       │   ├── CountStepper.tsx (mobile-friendly numeric setting)
-    │       │   └── Figure3D.tsx     (rotatable CSS 3D figure, arrow taps)
+    │       │   ├── Figure3D.tsx     (rotatable CSS 3D figure, taps, zoom, slide animation)
+    │       │   └── arrowGeometry.ts (where arrows are drawn, at rest or mid-slide)
     │       ├── apollo/
     │       │   └── client.ts
     │       └── graphql/
@@ -318,8 +365,8 @@ test fails the run. Lower it there if that gate gets in the way.
 
 | File | Focus |
 | --- | --- |
-| `test/figure.test.ts` | Face frames are right-handed, edge count and adjacency, `crossEdge` round-trips for every boundary cell |
-| `test/game.test.ts` | Options bounds, generation (deterministic, well-formed, solvable), sliding/blocking/clearing under both `blockedArrows` rules (including no deadlock under `return`), win validation |
+| `test/figure.test.ts` | Both figures: right-handed frames, face and edge counts (convex and concave), `neighbor` round-trips for every cell and direction, `step` exits over edges and carries on over flat seams |
+| `test/game.test.ts` | Options bounds (including the figure), generation on both figures (deterministic, well-formed, dense, solvable), `traceMove` paths (inner corners, flat seams), sliding/blocking/clearing under both `blockedArrows` rules (including no deadlock under `return`), win validation |
 
 Whatever the game, the suite should cover the two properties the architecture rests on:
 
