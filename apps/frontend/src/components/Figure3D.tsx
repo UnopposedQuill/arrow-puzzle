@@ -20,8 +20,9 @@
 // toward the viewer, and whichever arrow occupies that cell is tapped -- so the
 // whole cell is the target, not just the thin drawn line.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { cellKey, type Arrow, type BlockedArrows, type Cell, type Face, type Figure, type Trace, type Vec3 } from '@arrow-puzzle/shared';
+import { cellKey, sideSegments, turnDir, DIR_DELTAS, type Arrow, type BlockedArrows, type Cell, type Dir, type Face, type Figure, type Trace, type Vec3 } from '@arrow-puzzle/shared';
 import { arrowPieces, moveTrack, restingTrack, type Piece } from './arrowGeometry';
+import { EDGE_STYLES } from './edgeStyles';
 
 // Row-major 3x3 rotation matrices.
 type Mat3 = number[];
@@ -40,42 +41,45 @@ const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const rotationCss = (m: Mat3) =>
   `matrix3d(${m[0]},${m[3]},${m[6]},0,${m[1]},${m[4]},${m[7]},0,${m[2]},${m[5]},${m[8]},0,0,0,0,1)`;
 
+const unit = (a: Vec3): Vec3 => { const l = Math.hypot(...a); return [a[0] / l, a[1] / l, a[2] / l]; };
+
+// A face's div is a square; this maps it onto the face: its x axis along u,
+// its y axis along v (not necessarily square to u -- rhombi), facing out.
 const faceCss = ({ u, v, normal: n }: Face, [x, y, z]: Vec3) =>
-  `matrix3d(${u.join(',')},0,${v.join(',')},0,${n.join(',')},0,${x},${y},${z},1)`;
+  `matrix3d(${unit(u).join(',')},0,${unit(v).join(',')},0,${n.join(',')},0,${x},${y},${z},1)`;
 
 // Front, right and top in view, so the figure reads as a solid from the start
 // (and the notched cube's notch is in sight).
 const INITIAL_ROTATION = multiply(rotX(-0.45), rotY(-0.6));
-// Perspective distance, in figure sides.
+// Perspective distance, in figure extents (its bounding box's largest side).
 const PERSPECTIVE = 6;
 // Share of the board area the starting view fills, leaving a small margin.
 const FIT = 0.94;
 
-// Room the figure's starting view needs, in figure sides: its bounding cube's
-// corners rotated and projected with the CSS perspective.
-// The starting size fits this snugly; other rotations may clip a little at the
-// stage's edges, which zoom covers.
-const STARTING_SILHOUETTE = (() => {
+// Room a figure's starting view needs, in figure extents: its face corners
+// rotated and projected with the CSS perspective. The starting size fits this
+// snugly; other rotations may clip a little at the stage's edges, which zoom
+// covers.
+function startingSilhouette(figure: Figure) {
   const xs: number[] = [];
   const ys: number[] = [];
-  for (const x of [-0.5, 0.5]) for (const y of [-0.5, 0.5]) for (const z of [-0.5, 0.5]) {
-    const [rx, ry, rz] = rotate(INITIAL_ROTATION, [x, y, z]);
-    const k = PERSPECTIVE / (PERSPECTIVE - rz);
-    xs.push(rx * k);
-    ys.push(ry * k);
+  for (const { origin, u, v } of figure.faces) {
+    for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      const corner = [0, 1, 2].map(k => (origin[k] + a * u[k] + b * v[k] - figure.center[k]) / figure.extent) as Vec3;
+      const [rx, ry, rz] = rotate(INITIAL_ROTATION, corner);
+      const k = PERSPECTIVE / (PERSPECTIVE - rz);
+      xs.push(rx * k);
+      ys.push(ry * k);
+    }
   }
   // The figure is centred on the stage but its silhouette is not centred on
   // the figure, so fit twice its furthest reach from the centre each way.
   const reach = (vs: number[]) => 2 * Math.max(...vs.map(Math.abs));
   return { width: reach(xs), height: reach(ys) };
-})();
+}
 
 const DRAG_SPEED = 0.01; // radians per pixel
 const TAP_SLOP = 6; // pixels a pointer may wander before a press becomes a drag
-// Width of the lines drawn along the figure's edges, in screen px. They are
-// part of each face's drawing, *under* the arrows, so an arrow crossing an edge
-// runs over it unbroken. Flat seams between faces of one side get no line.
-const EDGE_WIDTH = 1.5;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 4;
 const WHEEL_ZOOM_SPEED = 0.0015; // per wheel delta unit, exponential
@@ -122,11 +126,10 @@ function slideFrame({ trace, rule }: SlideAnimation, elapsed: number) {
   };
 }
 
-// Where a face sits: its centre, in px from the figure's centre, and its size.
+// Where a face sits: its centre, in px from the figure's centre, and its side.
 function facePlacement(figure: Figure, face: Face, cellPx: number) {
-  const half = figure.size / 2;
   const centre = [0, 1, 2].map(k =>
-    (face.origin[k] + (face.u[k] + face.v[k]) * half - figure.extent / 2) * cellPx) as Vec3;
+    (face.origin[k] + (face.u[k] + face.v[k]) / 2 - figure.center[k]) * cellPx) as Vec3;
   return { centre, side: figure.size * cellPx };
 }
 
@@ -158,8 +161,15 @@ function pickCell(
     const t = dot(normal, sub(rotate(rotation, centre), eye)) / facing;
     if (best && t >= best.t) return;
     const local = sub(unrotate(rotation, [eye[0] + t * ray[0], eye[1] + t * ray[1], eye[2] + t * ray[2]]), centre);
-    const col = Math.floor((dot(local, face.u) + side / 2) / cellPx);
-    const row = Math.floor((dot(local, face.v) + side / 2) / cellPx);
+    // The hit as a * u^ + b * v^. On a rhombus u and v aren't square to each
+    // other, so solve with their overlap g rather than project.
+    const [u, v] = [unit(face.u), unit(face.v)];
+    const g = dot(u, v);
+    const [lu, lv] = [dot(local, u), dot(local, v)];
+    const a = (lu - g * lv) / (1 - g * g);
+    const b = (lv - g * lu) / (1 - g * g);
+    const col = Math.floor((a + side / 2) / cellPx);
+    const row = Math.floor((b + side / 2) / cellPx);
     if (row >= 0 && row < figure.size && col >= 0 && col < figure.size) best = { t, cell: { face: f, row, col } };
   });
   return (best as { t: number; cell: Cell } | null)?.cell ?? null;
@@ -207,8 +217,54 @@ function PieceView({ id, piece, bumped, color, opacity }: {
   );
 }
 
-// The sides of a face where the figure has an edge, as lines in cell units.
+// A face's sides as lines in cell units, indexed by Dir.
 const SIDE_LINES = (n: number) => [[0, 0, n, 0], [n, 0, n, n], [0, n, n, n], [0, 0, 0, n]];
+
+// The segments along one side of a face, each styled by its type: turn
+// segments get chevrons pointing the way heads turn, and every split between
+// segments gets a tick, so a split between two segments of the same type still
+// shows.
+function EdgeLine({ figure, face, side }: { figure: Figure; face: number; side: Dir }) {
+  const n = figure.size;
+  const segments = sideSegments(figure, face, side);
+  if (segments.length === 0) return null;
+  const [x1, y1] = SIDE_LINES(n)[side];
+  const horizontal = side % 2 === 0;
+  // Into the face, away from the side.
+  const [iy, ix] = DIR_DELTAS[((side + 2) % 4) as Dir];
+  // Point at `k` cells along the side, `inset` cells into the face.
+  const at = (k: number, inset = 0): [number, number] =>
+    horizontal ? [k, y1 + iy * inset] : [x1 + ix * inset, k];
+  return (
+    <g>
+      {segments.map(({ segment, from, to }) => {
+        const style = EDGE_STYLES[segment.type];
+        const [ax, ay] = at(from);
+        const [bx, by] = at(to);
+        let chevrons = null;
+        if (segment.type === 'turn') {
+          const [dy, dx] = DIR_DELTAS[turnDir(figure, segment, face, side)];
+          chevrons = Array.from({ length: Math.max(1, Math.floor((to - from) / 2)) }, (_, i) => {
+            const [px, py] = at(from + (to - from) * (i + 0.5) / Math.max(1, Math.floor((to - from) / 2)), 0.35);
+            const points = [[px - dx * 0.15 + dy * 0.2, py - dy * 0.15 + dx * 0.2], [px + dx * 0.15, py + dy * 0.15], [px - dx * 0.15 - dy * 0.2, py - dy * 0.15 - dx * 0.2]];
+            return <polyline key={i} points={points.map(p => p.join(',')).join(' ')} fill="none" stroke={style.color} strokeWidth={0.1} strokeLinecap="round" strokeLinejoin="round" />;
+          });
+        }
+        return (
+          <g key={from}>
+            <line x1={ax} y1={ay} x2={bx} y2={by} stroke={style.color} strokeWidth={style.width} vectorEffect="non-scaling-stroke" />
+            {chevrons}
+          </g>
+        );
+      })}
+      {segments.slice(1).map(({ from }) => {
+        const [ax, ay] = at(from);
+        const [bx, by] = at(from, 0.3);
+        return <line key={`tick-${from}`} x1={ax} y1={ay} x2={bx} y2={by} stroke="rgba(255, 255, 255, 0.9)" strokeWidth={2} vectorEffect="non-scaling-stroke" />;
+      })}
+    </g>
+  );
+}
 
 interface Drawn {
   key: string;
@@ -251,9 +307,10 @@ export function Figure3D({ figure, arrows, bump, animations, onAnimationDone, on
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-  // Side of the whole figure, in px, at zoom 1.
+  // Size of the whole figure (its extent), in px, at zoom 1.
+  const silhouette = useMemo(() => startingSilhouette(figure), [figure]);
   const faceSize = stage
-    ? Math.max(1, FIT * Math.min(stage.width / STARTING_SILHOUETTE.width, stage.height / STARTING_SILHOUETTE.height))
+    ? Math.max(1, FIT * Math.min(stage.width / silhouette.width, stage.height / silhouette.height))
     : 1;
 
   // Perspective follows the unzoomed size, so zooming scales the figure
@@ -456,12 +513,7 @@ export function Figure3D({ figure, arrows, bump, animations, onAnimationDone, on
                     <rect x={0} y={0} width={n} height={n} />
                   </clipPath>
                 </defs>
-                {SIDE_LINES(n).map(([x1, y1, x2, y2], dir) => face.sides[dir] !== 'flat' && (
-                  <line
-                    key={dir} x1={x1} y1={y1} x2={x2} y2={y2}
-                    stroke="rgba(255, 255, 255, 0.85)" strokeWidth={EDGE_WIDTH} vectorEffect="non-scaling-stroke"
-                  />
-                ))}
+                {([0, 1, 2, 3] as Dir[]).map(side => <EdgeLine key={side} figure={figure} face={f} side={side} />)}
                 <g style={{ opacity: near ? 1 : FAR_SIDE_OPACITY }}>
                   <g clipPath={`url(#face-clip-${f})`}>{drawn.filter(d => !d.unclipped).map(view)}</g>
                   {drawn.filter(d => d.unclipped).map(view)}

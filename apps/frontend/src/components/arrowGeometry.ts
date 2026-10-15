@@ -53,10 +53,14 @@ export function restingTrack(figure: Figure, arrow: Arrow): TrackCell[] {
 export function moveTrack(figure: Figure, trace: Trace): TrackCell[] {
   const track = [...restingTrack(figure, trace.arrow), ...trace.path];
   if (trace.exited) {
-    const last = track[track.length - 1];
-    const [dRow, dCol] = DIR_DELTAS[last.dir];
+    // It leaves in the heading the rules report, which a turn edge at a corner
+    // may have changed: the last cell on the figure heads out that way.
+    const dir = trace.exitDir!;
+    const last = { ...track[track.length - 1], dir };
+    track[track.length - 1] = last;
+    const [dRow, dCol] = DIR_DELTAS[dir];
     for (let k = 1; k <= trace.arrow.cells.length + 1; k++) {
-      track.push({ cell: { face: last.cell.face, row: last.cell.row + dRow * k, col: last.cell.col + dCol * k }, dir: last.dir });
+      track.push({ cell: { face: last.cell.face, row: last.cell.row + dRow * k, col: last.cell.col + dCol * k }, dir });
     }
   }
   return track;

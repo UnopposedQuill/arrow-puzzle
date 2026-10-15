@@ -6,7 +6,9 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useMutation } from '@apollo/client/react';
 import {
   generatePuzzle, applyMove, traceMove, checkWin, anyArrowCanLeave,
-  DEFAULT_OPTIONS, OPTION_LIMITS, FIGURE_KINDS,
+  DEFAULT_OPTIONS, OPTION_LIMITS, FIGURE_KINDS, edgeLayoutsFor,
+  type EdgeLayout,
+  type EdgeType,
   type FigureKind,
   type GameState,
   type Move,
@@ -15,11 +17,30 @@ import {
 import { SUBMIT_ATTEMPT, type SubmitAttemptData, type SubmitAttemptVars } from './graphql/mutations';
 import { CountStepper } from './components/CountStepper';
 import { Figure3D, type SlideAnimation } from './components/Figure3D';
+import { EDGE_STYLES } from './components/edgeStyles';
 import './App.css';
 
 const TITLE = 'Arrow Puzzle';
 
-const FIGURE_NAMES: Record<FigureKind, string> = { cube: 'Cube', notch: 'Notched cube' };
+const FIGURE_NAMES: Record<FigureKind, string> = {
+  cube: 'Cube',
+  notch: 'Notched cube',
+  step: 'Step',
+  cross: '3D cross',
+  rhombic: 'Rhombic dodecahedron',
+};
+
+const EDGE_NAMES: Record<EdgeLayout, string> = {
+  plain: 'Plain',
+  few: 'Random (few)',
+  many: 'Random (many)',
+  crown: 'Sticky crown',
+  girdle: 'Mirror girdle',
+  whirl: 'Turning whirl',
+};
+
+const selectStyle = { fontSize: '16px', padding: '4px' }; // 16px: no zoom on focus on phones
+const labelStyle = { color: 'white', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' } as const;
 
 function App() {
   const [state, setState] = useState<GameState | null>(null);
@@ -55,6 +76,9 @@ function App() {
   // can leave; say so instead of letting the player hunt for a move.
   const stuck = useMemo(() => !!state && state.arrows.length > 0 && !anyArrowCanLeave(state), [state]);
 
+  // Edge types on this board, for the legend.
+  const edgeTypes = useMemo(() => [...new Set<EdgeType>(state?.figure.edges.flatMap(e => e.segments.map(seg => seg.type)) ?? [])].sort(), [state]);
+
   const flashBlocked = (id: number) => setBump(b => ({ id, n: (b?.n ?? 0) + 1 }));
 
   const handleAnimationDone = useCallback((key: number) => {
@@ -76,6 +100,8 @@ function App() {
   // on the server assumes one set of rules for the whole move list.
   const handleOptionCommit = <K extends keyof PuzzleOptions>(key: K) => (value: PuzzleOptions[K]) => {
     const next = { ...options, [key]: value };
+    // A preset that changes nothing on the new figure falls back to plain.
+    if (!edgeLayoutsFor(next.figure).includes(next.edges)) next.edges = 'plain';
     setOptions(next);
     initGame(next);
   };
@@ -167,15 +193,16 @@ function App() {
           New Game
         </button>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: '10px' }}>
-          <label style={{ color: 'white', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <label style={labelStyle}>
             Figure:
-            <select
-              value={options.figure}
-              onChange={(e) => handleOptionCommit('figure')(e.target.value as FigureKind)}
-              // 16px keeps mobile browsers from zooming in on focus.
-              style={{ fontSize: '16px', padding: '4px' }}
-            >
+            <select value={options.figure} onChange={(e) => handleOptionCommit('figure')(e.target.value as FigureKind)} style={selectStyle}>
               {FIGURE_KINDS.map(kind => <option key={kind} value={kind}>{FIGURE_NAMES[kind]}</option>)}
+            </select>
+          </label>
+          <label style={labelStyle}>
+            Edges:
+            <select value={options.edges} onChange={(e) => handleOptionCommit('edges')(e.target.value as EdgeLayout)} style={selectStyle}>
+              {edgeLayoutsFor(options.figure).map(layout => <option key={layout} value={layout}>{EDGE_NAMES[layout]}</option>)}
             </select>
           </label>
           <CountStepper
@@ -203,6 +230,17 @@ function App() {
           Blocked arrows stay where they stop (instead of going back)
         </label>
       </div>
+      {edgeTypes.length > 1 && (
+        // What the coloured edges on this board do.
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '4px 12px', marginTop: '8px', fontSize: '12px', color: '#ddd' }}>
+          {edgeTypes.map(type => (
+            <span key={type} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <span style={{ width: '16px', height: `${EDGE_STYLES[type].width}px`, background: EDGE_STYLES[type].color }} />
+              {EDGE_STYLES[type].label}
+            </span>
+          ))}
+        </div>
+      )}
       <div style={{ color: '#aaa', marginTop: '10px', fontSize: '14px', flex: '0 0 auto' }}>
         Moves: {moveHistory.length} · Arrows left: {state?.arrows.length ?? 0}
       </div>

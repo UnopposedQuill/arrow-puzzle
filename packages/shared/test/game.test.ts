@@ -1,7 +1,7 @@
 import {
   generatePuzzle, applyMove, traceMove, anyArrowCanLeave, isValidMove, replayMoves, checkWin, isValidOptions, mulberry32,
-  buildCube, buildFigure, cellKey, neighbor, DIRS, DEFAULT_OPTIONS, OPTION_LIMITS, FIGURE_KINDS,
-  type Arrow, type BlockedArrows, type Cell, type FigureKind, type GameState,
+  buildCube, buildFigure, cellKey, neighbor, findEdge, edgeLayoutsFor, DIRS, DEFAULT_OPTIONS, OPTION_LIMITS, FIGURE_KINDS, EDGE_LAYOUTS,
+  type Arrow, type BlockedArrows, type Cell, type EdgeLayout, type EdgeType, type Figure, type FigureKind, type GameState,
 } from '../src/index.js';
 
 const c = (row: number, col: number, face = 0): Cell => ({ face, row, col });
@@ -20,8 +20,8 @@ describe('mulberry32', () => {
 describe('isValidOptions', () => {
   it('accepts options within the limits', () => {
     expect(isValidOptions(DEFAULT_OPTIONS)).toBe(true);
-    expect(isValidOptions({ figure: 'cube', size: OPTION_LIMITS.size.min, maxLength: OPTION_LIMITS.maxLength.min, blockedArrows: 'stay' })).toBe(true);
-    expect(isValidOptions({ figure: 'notch', size: OPTION_LIMITS.size.max, maxLength: OPTION_LIMITS.maxLength.max, blockedArrows: 'return' })).toBe(true);
+    expect(isValidOptions({ figure: 'cube', size: OPTION_LIMITS.size.min, maxLength: OPTION_LIMITS.maxLength.min, blockedArrows: 'stay', edges: 'plain' })).toBe(true);
+    expect(isValidOptions({ figure: 'notch', size: OPTION_LIMITS.size.max, maxLength: OPTION_LIMITS.maxLength.max, blockedArrows: 'return', edges: 'whirl' })).toBe(true);
   });
 
   it('rejects out-of-range, fractional or unknown options', () => {
@@ -31,11 +31,12 @@ describe('isValidOptions', () => {
     expect(isValidOptions({ ...DEFAULT_OPTIONS, size: 2.5 })).toBe(false);
     expect(isValidOptions({ ...DEFAULT_OPTIONS, blockedArrows: 'bounce' as BlockedArrows })).toBe(false);
     expect(isValidOptions({ ...DEFAULT_OPTIONS, figure: 'sphere' as FigureKind })).toBe(false);
+    expect(isValidOptions({ ...DEFAULT_OPTIONS, edges: 'spiky' as EdgeLayout })).toBe(false);
   });
 });
 
 describe('generatePuzzle', () => {
-  const options = { figure: 'cube' as const, size: 4, maxLength: 4, blockedArrows: 'stay' as const };
+  const options = { figure: 'cube' as const, size: 4, maxLength: 4, blockedArrows: 'stay' as const, edges: 'plain' as const };
 
   it('is deterministic per seed', () => {
     expect(generatePuzzle(123, options)).toEqual(generatePuzzle(123, options));
@@ -173,7 +174,7 @@ describe('applyMove', () => {
   });
 
   it('never mutates its input', () => {
-    const state = generatePuzzle(9, { figure: 'cube', size: 3, maxLength: 3, blockedArrows: 'stay' });
+    const state = generatePuzzle(9, { figure: 'cube', size: 3, maxLength: 3, blockedArrows: 'stay', edges: 'plain' });
     const before = JSON.parse(JSON.stringify(state));
     state.arrows.forEach(a => applyMove(state, a.id));
     expect(state).toEqual(before);
@@ -232,7 +233,7 @@ describe("blockedArrows: 'return'", () => {
   });
 
   it('can never deadlock: any sequence of taps leaves the board solvable', () => {
-    const options = { figure: 'cube' as const, size: 4, maxLength: 4, blockedArrows: 'return' as const };
+    const options = { figure: 'cube' as const, size: 4, maxLength: 4, blockedArrows: 'return' as const, edges: 'plain' as const };
     for (let seed = 0; seed < 20; seed++) {
       const rand = mulberry32(seed);
       let state = generatePuzzle(seed, options);
@@ -241,6 +242,156 @@ describe("blockedArrows: 'return'", () => {
         state = applyMove(state, state.arrows[Math.floor(rand() * state.arrows.length)].id);
       }
       expect(checkWin(replayMoves(state, solution(state)))).toBe(true);
+    }
+  });
+});
+
+// A 3x3 cube with one front edge given a type: front is face 0, top face 4.
+const cubeWith = (a: number, b: number, type: EdgeType): Figure => {
+  const figure = buildCube(3);
+  findEdge(figure, a, b)!.segments = [{ from: 0, to: 3, type }];
+  return figure;
+};
+const on = (figure: Figure, arrows: Arrow[]): GameState => ({ figure, arrows, blockedArrows: 'return' });
+
+describe('redirecting edges', () => {
+  it('sticky: the arrow carries on over the next face and leaves past it', () => {
+    const trace = traceMove(on(cubeWith(0, 4, 'sticky'), [{ id: 0, cells: [c(1, 1)], dir: 0 }]), 0)!;
+    expect(trace.exited).toBe(true);
+    // Up the front, then across the whole top face.
+    expect(trace.path.map(p => p.cell)).toEqual([c(0, 1), c(2, 1, 4), c(1, 1, 4), c(0, 1, 4)]);
+  });
+
+  it('mirror: a one-cell arrow bounces back and leaves the other way', () => {
+    const trace = traceMove(on(cubeWith(0, 4, 'mirror'), [{ id: 0, cells: [c(0, 1)], dir: 0 }]), 0)!;
+    expect(trace.exited).toBe(true);
+    expect(trace.path.map(p => p.cell)).toEqual([c(1, 1), c(2, 1)]);
+  });
+
+  it('mirror: a longer arrow bounces into its own body and is blocked', () => {
+    const trace = traceMove(on(cubeWith(0, 4, 'mirror'), [{ id: 0, cells: [c(2, 1), c(1, 1), c(0, 1)], dir: 0 }]), 0)!;
+    expect(trace).toMatchObject({ path: [], exited: false });
+  });
+
+  it('mirror: a two-cell arrow turns round, since its tail moves out of the way', () => {
+    const trace = traceMove(on(cubeWith(0, 4, 'mirror'), [{ id: 0, cells: [c(1, 1), c(0, 1)], dir: 0 }]), 0)!;
+    expect(trace.exited).toBe(true);
+  });
+
+  it('reports the heading an arrow leaves in, turned at a corner', () => {
+    // On the last cell of a turn edge the head turns toward the corner and
+    // leaves straight over the side edge there.
+    const figure = cubeWith(0, 4, 'turn');
+    const turn = findEdge(figure, 0, 4)!;
+    turn.segments[0].along = 1;
+    if (traceMove(on(figure, [{ id: 0, cells: [c(1, 0)], dir: 0 }]), 0)!.path[1]?.dir !== 1) turn.segments[0].along = -1;
+    const trace = traceMove(on(figure, [{ id: 0, cells: [c(1, 2)], dir: 0 }]), 0)!;
+    expect(trace).toMatchObject({ path: [{ cell: c(0, 2), dir: 0 }], exited: true, exitDir: 1 });
+    // Without redirects it leaves the way it was heading.
+    expect(traceMove(on(buildCube(3), [{ id: 0, cells: [c(1, 2)], dir: 0 }]), 0)).toMatchObject({ exited: true, exitDir: 0 });
+  });
+
+  it("an arrow whose way out loops forever doesn't move", () => {
+    // Mirrors above and below: a one-cell arrow would bounce forever.
+    const figure = cubeWith(0, 4, 'mirror');
+    findEdge(figure, 0, 5)!.segments = [{ from: 0, to: 3, type: 'mirror' }];
+    const state = on(figure, [{ id: 0, cells: [c(1, 1)], dir: 0 }]);
+    expect(traceMove(state, 0)).toMatchObject({ path: [], exited: false });
+    expect(applyMove(state, 0)).toBe(state);
+  });
+
+  it('an arrow stuck between redirecting edges stops there', () => {
+    // At the top-right corner, the top edge turns heads right and the right
+    // edge turns them up again: they go round on the spot.
+    const figure = cubeWith(0, 4, 'turn');
+    const top = findEdge(figure, 0, 4)!;
+    const right = findEdge(figure, 0, 1)!;
+    right.segments = [{ from: 0, to: 3, type: 'turn' }];
+    // Each edge's `along` is relative to its own first face; pick the values
+    // that produce the turns described, by trying them.
+    const probes: [typeof top, Arrow, number][] = [
+      [top, { id: 0, cells: [c(1, 0)], dir: 0 }, 1],
+      [right, { id: 0, cells: [c(2, 1)], dir: 1 }, 0],
+    ];
+    for (const [edge, arrow, wanted] of probes) {
+      edge.segments[0].along = 1;
+      if (traceMove(on(figure, [arrow]), 0)!.path[1]?.dir !== wanted) edge.segments[0].along = -1;
+    }
+    const trace = traceMove(on(figure, [{ id: 0, cells: [c(1, 2)], dir: 0 }]), 0)!;
+    expect(trace).toMatchObject({ path: [{ cell: c(0, 2), dir: 0 }], exited: false });
+  });
+});
+
+describe('edge layouts', () => {
+  it('leaves every edge open when plain', () => {
+    expect(generatePuzzle(1, DEFAULT_OPTIONS).figure.edges.every(e => e.segments.length === 1 && e.segments[0].type === 'open')).toBe(true);
+  });
+
+  it('assigns redirecting types at random, more of them for many', () => {
+    const redirecting = (edges: EdgeLayout) => [0, 1, 2, 3, 4].reduce((sum, seed) =>
+      sum + generatePuzzle(seed, { ...DEFAULT_OPTIONS, figure: 'cross', size: 6, maxLength: 4, edges }).figure.edges.flatMap(e => e.segments).filter(s => s.type !== 'open').length, 0);
+    expect(redirecting('few')).toBeGreaterThan(0);
+    expect(redirecting('many')).toBeGreaterThan(redirecting('few'));
+    const turns = generatePuzzle(3, { ...DEFAULT_OPTIONS, figure: 'cross', size: 6, maxLength: 4, edges: 'many' }).figure.edges.flatMap(e => e.segments).filter(s => s.type === 'turn');
+    expect(turns.every(e => e.along === 1 || e.along === -1)).toBe(true);
+  });
+
+  it('applies the presets', () => {
+    const edges = (layout: EdgeLayout) => generatePuzzle(1, { ...DEFAULT_OPTIONS, size: 4, maxLength: 4, edges: layout }).figure.edges;
+    // On the cube: the 4 edges around the top are sticky; the 4 vertical ones
+    // are mirrors, or turn heads upward.
+    // Presets type whole edges.
+    const whole = (layout: EdgeLayout, type: EdgeType) =>
+      edges(layout).filter(e => e.segments.length === 1 && e.segments[0].type === type);
+    expect(whole('crown', 'sticky')).toHaveLength(4);
+    expect(whole('girdle', 'mirror')).toHaveLength(4);
+    expect(whole('whirl', 'turn')).toHaveLength(4);
+  });
+
+  it('splits edges into 1-3 contiguous segments of at least 2 cells, usually 2', () => {
+    const counts = [0, 0, 0, 0];
+    for (let seed = 0; seed < 10; seed++) {
+      const { figure } = generatePuzzle(seed, { ...DEFAULT_OPTIONS, figure: 'cube', size: 9, maxLength: 4, edges: 'many' });
+      for (const edge of figure.edges) {
+        counts[edge.segments.length]++;
+        expect(edge.segments[0].from).toBe(0);
+        expect(edge.segments[edge.segments.length - 1].to).toBe(figure.size);
+        edge.segments.forEach((s, i) => {
+          expect(s.to - s.from).toBeGreaterThanOrEqual(2);
+          if (i > 0) expect(s.from).toBe(edge.segments[i - 1].to);
+        });
+      }
+    }
+    // Whole edges happen; two segments are the most common.
+    expect(counts[1]).toBeGreaterThan(0);
+    expect(counts[3]).toBeGreaterThan(0);
+    expect(counts[2]).toBeGreaterThan(counts[1]);
+    expect(counts[2]).toBeGreaterThan(counts[3]);
+  });
+
+  it('leaves short edges whole', () => {
+    const { figure } = generatePuzzle(1, { ...DEFAULT_OPTIONS, size: 3, maxLength: 2, edges: 'many' });
+    expect(figure.edges.every(e => e.segments.length === 1)).toBe(true);
+  });
+
+  it('offers only presets that change something on the figure', () => {
+    expect(edgeLayoutsFor('cube')).toEqual([...EDGE_LAYOUTS]);
+    // The rhombic dodecahedron has no vertical edges.
+    expect(edgeLayoutsFor('rhombic')).toEqual(['plain', 'few', 'many', 'crown']);
+  });
+
+  it.each(FIGURE_KINDS)('keeps every %s board solvable whatever the edges', figure => {
+    for (const edges of edgeLayoutsFor(figure)) {
+      for (let seed = 0; seed < 3; seed++) {
+        const state = generatePuzzle(seed, { ...DEFAULT_OPTIONS, figure, size: 8, maxLength: 8, edges });
+        // Every step of the reference solution clears exactly one arrow.
+        let current = state;
+        for (const move of solution(state)) {
+          const next = applyMove(current, move);
+          expect(next.arrows).toHaveLength(current.arrows.length - 1);
+          current = next;
+        }
+      }
     }
   });
 });
@@ -268,7 +419,7 @@ describe('anyArrowCanLeave', () => {
 });
 
 describe('win validation', () => {
-  const options = { figure: 'cube' as const, size: 3, maxLength: 3, blockedArrows: 'stay' as const };
+  const options = { figure: 'cube' as const, size: 3, maxLength: 3, blockedArrows: 'stay' as const, edges: 'plain' as const };
 
   it('proves a win from seed and moves alone', () => {
     const moves = solution(generatePuzzle(2024, options));

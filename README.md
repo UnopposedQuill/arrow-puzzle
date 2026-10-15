@@ -16,49 +16,90 @@ its way
 
 ### Figures, faces and edges
 
-A puzzle is played on a **figure**: a cube split into blocks × blocks × blocks subcubes, some
-of them removed. The "Figure" setting picks one:
+A puzzle is played on a **figure**: a closed surface made of four-sided faces, each carrying
+a square grid of cells, linked side to side. The "Figure" setting picks one:
 
-| Figure | Blocks | Removed | Faces |
-| --- | --- | --- | --- |
-| `cube` | 1 | none | 6 |
-| `notch` ("Notched cube") | 2×2×2 | the top-front-right block | 24 |
+| Figure | Built as | Faces |
+| --- | --- | --- |
+| `cube` | 1 block | 6 squares |
+| `notch` ("Notched cube") | 2×2×2 blocks, the top-front-right one removed | 24 squares |
+| `step` ("Step") | 2×2×2 blocks, the two top-front ones removed: one long inner corner | 22 squares |
+| `cross` ("3D cross") | the centre of 3×3×3 blocks and its six face blocks: mostly inner corners | 30 squares |
+| `rhombic` ("Rhombic dodecahedron") | 12 rhombi, a Catalan solid | 12 rhombi |
 
-The "Grid" setting (16 by default, 2–24 allowed) is the number of cells across the whole
-figure's side. A figure split into blocks rounds it up so it divides evenly. The defaults,
-a 16 grid with arrows up to 16 cells, are meant as medium difficulty. New figures are a
-new entry in `SHAPES` (`packages/shared/src/figure.ts`): the faces, edges and movement
-follow from which blocks are removed.
+The "Grid" setting (16 by default, 2–24 allowed) is the number of cells across a block
+figure; block figures round it up so their blocks divide it evenly. The rhombic
+dodecahedron's faces get half as many cells a side. The defaults, a 16 grid with arrows up
+to 16 cells, are meant as medium difficulty.
 
-The surface is made of **faces**, one per exposed side of a block, each a square grid of
-cells. Each face has a 3D frame: an outward `normal`, the axes `u` (columns, "right") and
-`v` (rows, "down") with `u × v = normal`, and the `origin` corner where its grid starts.
-The frames use CSS orientation (x right, y down, z toward the viewer), so the frontend
-places each face with a `matrix3d` built straight from its frame.
+**How figures are built** (`packages/shared/src/figure.ts`). A builder only lists faces;
+`mesh()` does the rest:
 
-Moving off a cell (`neighbor`, pure geometry, worked out on the solid's voxel lattice) goes
-one of three ways:
+- **Faces** are parallelograms: an `origin` corner and side vectors `u` (columns, "right")
+  and `v` (rows, "down"), with `u × v` pointing outward. Square faces and rhombi both fit.
+- **Links:** `mesh()` links the sides that share corners, works out whether each link runs
+  the same way or reversed, and classifies it.
+- **Classification:** flat if the next face lies in the same plane; otherwise convex (outer)
+  or concave (inner), depending on which side of this face's plane the next one falls.
+- **Block figures** (`blockFaces`) emit one face per exposed side of a kept block. Kept
+  blocks must share faces, never just an edge, so every side is shared by exactly two faces.
+- **The rhombic dodecahedron** (`rhombicFaces`) lists its 12 rhombi from the cube's and the
+  octahedron's corners.
+- **Adding a figure** is a builder returning faces. Any solid with four-sided faces fits:
+  other Catalan solids with rhombic or kite faces, or more block shapes. Triangle,
+  pentagon and hexagon faces (most Archimedean solids) need a different cell grid.
+- **Frames** use CSS orientation (x right, y down, z toward the viewer), so the frontend
+  places each face with a `matrix3d` built straight from its frame.
+
+Moving off a cell (`neighbor`, pure geometry) follows the links:
 
 | Crossing | Surface | In the game |
 | --- | --- | --- |
-| `flat` | Carries on in the same plane, within a face or onto the next face of the same side | Not an edge: arrows carry straight on |
+| `flat` | The next face is in the same plane | Not an edge: arrows carry straight on |
 | `convex` | Folds away: an outer edge | An edge |
-| `concave` | Folds up into a wall: an inner corner of the notch | An edge |
+| `concave` | Folds up into a wall: an inner corner | An edge |
 
-**An arrow is cleared once its head leaves a side over a non-sticky edge**, outer or inner.
-At an inner corner it visibly slides into the wall as it clears, which is accepted. Edges
-carry a type, and `step` asks it what happens:
+**Edges are split into segments**, runs of cells along the edge, and each segment has a
+type that decides what an arrow's head does on reaching the edge there (`step`). Where a
+head meets an edge matters, not just which edge it meets. Bodies just lie across edges of
+any type and follow the head's path when it slides.
 
-| Edge type | Effect | Status |
+Segments started as a happy accident of block figures: an edge of the figure that spans
+two blocks is two edges in the mesh, each typed on its own. That turned out to be a good
+mechanic, so it's now deliberate and works on every figure. Each edge (`Edge.segments`)
+holds contiguous segments covering it, counted along its first face's side, and
+`sideSegments` gives them in any face's own terms. The frontend draws each segment in
+its type's colour and puts a small tick at every split, so two neighbouring segments of
+the same type still show where they meet.
+
+| Edge type | Drawn | Head reaching it |
 | --- | --- | --- |
-| `open` | The arrow leaves its side and is cleared | Implemented, used on every edge |
-| `sticky` *(planned)* | The arrow is carried onto the next face and has to clear another edge | Add to `EdgeType`, return the neighbouring cell from `step` |
+| `open` | white | Leaves its side; the arrow is cleared (at an inner corner it slides into the wall, which is accepted) |
+| `sticky` | green | Carries on onto the next face, so it has to leave over another edge |
+| `mirror` | blue | Bounces straight back. The body is normally right behind, so the arrow is blocked; one- and two-cell arrows can bounce away |
+| `turn` | orange, with chevrons | Turns 90° to run along the edge, the way the chevrons point (`along`, the same direction in space from either face) |
 
-Edge types only apply to an arrow's **head**. Its body lies on the figure as a path of
-neighbouring cells, so bodies wrap over edges onto other faces, and the body follows the
-head's path when it slides. With only `open` edges a head stays on one flat side until it
-leaves it, so no slide can loop. Once `sticky` exists, a head could circle the figure, and
-the loops in `traceMove` and generation will need a step bound.
+Redirecting edges can send a head round in circles. A head redirected more than four times
+without moving (e.g. two turn edges at a corner pointing into each other) is **stuck**, and
+the arrow is blocked there. An arrow whose way out **loops forever** (a ring of sticky
+edges, two facing mirrors) **doesn't move at all**: the slide notices when the head comes
+back to a cell it was in, heading the same way.
+
+**Edge layouts** (the "Edges" setting, `EdgeLayout`) decide which edges get which type:
+
+| Layout | Edges |
+| --- | --- |
+| `plain` | All open (the default) |
+| `few` / `many` | At random from the seed: each edge is split into 1–3 segments (2 half the time, 1 or 3 a quarter each; every segment at least 2 cells, so short edges split less), and each segment has a 15% / 35% chance to become sticky, mirror or turn. Whole edges of one type still happen |
+| `crown` ("Sticky crown") | Edges around top-facing faces are sticky |
+| `girdle` ("Mirror girdle") | Vertical edges are mirrors |
+| `whirl` ("Turning whirl") | Vertical edges turn heads upward |
+
+The presets are rules over a figure's edges (`EDGE_PRESETS`) and type whole edges, so
+each works on every figure. A preset that would change nothing on a figure isn't offered there
+(`edgeLayoutsFor`); the rhombic dodecahedron has no vertical edges. They're stand-ins
+until hand-made "scenarios" exist. The frontend shows a legend of the edge types on the
+current board. Neither the new figures nor the edge layouts earn a score bonus yet.
 
 ### Arrows and moves
 
@@ -138,11 +179,16 @@ straight (`STRAIGHT_BIAS`) so it curls into dead ends less often.
 **Solvable by construction, from both ends.** Arrows are cleared in **reverse id order
 (highest first)**, and generation builds that order from both ends:
 
-- an arrow added to the **front** is cleared before all the others, so its path from head to
-  edge must be clear of every arrow already placed;
+- an arrow added to the **front** is cleared before all the others, so it must be able to
+  leave past every arrow already placed;
 - an arrow added to the **back** is cleared after all the others, when the board is empty, so
-  its own path doesn't matter, but it must not sit on the path of any arrow already
-  placed.
+  it must be able to leave from an empty board, and must not sit on the path of any arrow
+  already placed.
+
+Both checks simulate the arrow's actual slide (`slide`, the same code that plays moves).
+With mirrors, an arrow's own body moves into its way as it slides, and redirecting edges
+can make a way out loop or get stuck, so a path can't be judged from the starting
+position alone.
 
 With front placement alone, about a fifth of the board stayed empty in visible patches:
 once the board is dense, most free cells have a blocked path in every direction. Many

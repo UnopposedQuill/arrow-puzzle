@@ -1,9 +1,9 @@
 import { ApolloServer } from '@apollo/server';
 import { startStandaloneServer } from '@apollo/server/standalone';
-import { generatePuzzle, replayMoves, checkWin, isValidOptions, scoreAttempt, type BlockedArrows, type FigureKind, type Move } from '@arrow-puzzle/shared';
+import { generatePuzzle, replayMoves, checkWin, isValidOptions, scoreAttempt, type BlockedArrows, type EdgeLayout, type FigureKind, type Move } from '@arrow-puzzle/shared';
 
 // The arguments mirror the shared contract: the seed and generation options
-// (figure, size, maxLength, blockedArrows) rebuild the board and its rules, the moves
+// (figure, size, maxLength, blockedArrows, edges) rebuild the board and its rules, the moves
 // (tapped arrow ids) replay it.
 const typeDefs = `#graphql
   type SubmitResponse {
@@ -22,10 +22,23 @@ const typeDefs = `#graphql
   enum FigureKind {
     cube
     notch
+    step
+    cross
+    rhombic
+  }
+
+  # Mirrors EdgeLayout in packages/shared.
+  enum EdgeLayout {
+    plain
+    few
+    many
+    crown
+    girdle
+    whirl
   }
 
   type Mutation {
-    submitAttempt(seed: Int!, moves: [Int!]!, timeMs: Int!, figure: FigureKind!, size: Int!, maxLength: Int!, blockedArrows: BlockedArrows!): SubmitResponse!
+    submitAttempt(seed: Int!, moves: [Int!]!, timeMs: Int!, figure: FigureKind!, size: Int!, maxLength: Int!, blockedArrows: BlockedArrows!, edges: EdgeLayout!): SubmitResponse!
   }
 
   type Query {
@@ -35,11 +48,11 @@ const typeDefs = `#graphql
 
 const resolvers = {
   Mutation: {
-    submitAttempt: async (_: any, { seed, moves, timeMs, figure, size, maxLength, blockedArrows }: { seed: number; moves: Move[]; timeMs: number; figure: FigureKind; size: number; maxLength: number; blockedArrows: BlockedArrows }) => {
+    submitAttempt: async (_: any, { seed, moves, timeMs, figure, size, maxLength, blockedArrows, edges }: { seed: number; moves: Move[]; timeMs: number; figure: FigureKind; size: number; maxLength: number; blockedArrows: BlockedArrows; edges: EdgeLayout }) => {
       try {
         // 0. Options come from the client; out-of-range ones could make
         //    generation arbitrarily expensive.
-        const options = { figure, size, maxLength, blockedArrows };
+        const options = { figure, size, maxLength, blockedArrows, edges };
         if (!isValidOptions(options)) {
           return { success: false, score: 0, message: 'Invalid puzzle options.' };
         }

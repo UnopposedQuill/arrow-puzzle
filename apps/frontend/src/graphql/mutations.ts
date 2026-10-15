@@ -1,5 +1,5 @@
 import { gql } from '@apollo/client';
-import type { BlockedArrows, FigureKind, Move } from '@arrow-puzzle/shared';
+import type { BlockedArrows, EdgeLayout, FigureKind, Move } from '@arrow-puzzle/shared';
 
 export interface SubmitAttemptData {
   submitAttempt: {
@@ -18,11 +18,12 @@ export interface SubmitAttemptVars {
   size: number;
   maxLength: number;
   blockedArrows: BlockedArrows;
+  edges: EdgeLayout;
 }
 
 export const SUBMIT_ATTEMPT = gql`
-  mutation SubmitAttempt($seed: Int!, $moves: [Int!]!, $timeMs: Int!, $figure: FigureKind!, $size: Int!, $maxLength: Int!, $blockedArrows: BlockedArrows!) {
-    submitAttempt(seed: $seed, moves: $moves, timeMs: $timeMs, figure: $figure, size: $size, maxLength: $maxLength, blockedArrows: $blockedArrows) {
+  mutation SubmitAttempt($seed: Int!, $moves: [Int!]!, $timeMs: Int!, $figure: FigureKind!, $size: Int!, $maxLength: Int!, $blockedArrows: BlockedArrows!, $edges: EdgeLayout!) {
+    submitAttempt(seed: $seed, moves: $moves, timeMs: $timeMs, figure: $figure, size: $size, maxLength: $maxLength, blockedArrows: $blockedArrows, edges: $edges) {
       success
       score
       message
